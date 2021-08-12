@@ -2,6 +2,10 @@ using Test
 using Distributions
 using AbstractGrammars.ConjugateModels
 
+###################################
+### Test compound distributions ###
+###################################
+
 @testset "dirichlet categorical" begin
   dc = DirCat(Dict('a' => 5, 'b' => 3))
   @test exp(logpdf(dc, 'a')) > 0
@@ -32,4 +36,10 @@ value(m::Mixture, trace) = m.value[trace.component]
   pscount = model.component.pscounts[trace.component]
   @test add_obs!(model, trace, 10).component.pscounts[trace.component] == 
         pscount + 10
+end
+
+include("../src/BinaryCountGrammar.jl")
+import .BinaryCountGrammar
+@testset "count all binary trees" begin
+  BinaryCountGrammar.test_binary_count_grammar()
 end

@@ -3,6 +3,8 @@ module BinaryCountGrammar
 using AbstractGrammars
 import AbstractGrammars: initial_category, push_completions!
 
+export test_binary_count_grammar
+
 @enum Category nonterminal terminal
 
 # rules can either branch or terminate
@@ -38,12 +40,13 @@ function push_completions!(stack, ::Grammar, c1, c2)
   end
 end
 
-m = 10
-terminalss = fill([terminal], m)
-grammar = Grammar()
-@time chart = chartparse(grammar, CountScoring(), terminalss)
 using Test
-@test [chart[1,k][initial_category(grammar)] for k in 1:10] ==
-      [1, 1, 2, 5, 14, 42, 132, 429, 1430, 4862]
+function test_binary_count_grammar()
+  terminalss = fill([terminal], 10)
+  grammar = Grammar()
+  @time chart = chartparse(grammar, CountScoring(), terminalss)
+  @test [chart[1,k][initial_category(grammar)] for k in 1:10] ==
+        [1, 1, 2, 5, 14, 42, 132, 429, 1430, 4862]
+end
 
 end # module
