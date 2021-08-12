@@ -74,37 +74,6 @@ abstract type ConjugateModel end
 # Generated functions don't work because they don't see method definitions from
 # other modules. Therefore, we use a macro.
 
-
-
-# @generated function logpdf(model::M, trace) where M <: ConjugateModel
-#   variables = fieldnames(M)
-#   logpdf_exprs = [:(logpdf($v(model, trace), trace.$v)) for v in variables]
-#   :(+($(logpdf_exprs...)))
-# end
-
-# @generated function rand(rng::Distributions.AbstractRNG, model::M) where 
-#   M <: ConjugateModel
-
-#   variables = fieldnames(M)
-#   init_trace_expr = :(trace0 = @NamedTuple{}(()))
-#   sample_exprs = map(enumerate(variables)) do (i, v)
-#     :($(Symbol(:trace, i)) = ($(Symbol(:trace, i-1))..., 
-#                               $v=rand(rng, $v(model, $(Symbol(:trace, i-1))))))
-#   end
-#   :($(Expr(:block, 
-#     init_trace_expr, 
-#     sample_exprs..., 
-#     Symbol(:trace, length(variables)))))
-# end
-
-# @generated function add_obs!(model::M, trace, pscount) where M <: ConjugateModel
-#   variables = fieldnames(M)
-#   add_exprs = map(variables) do v 
-#     :(add_obs!($v(model, trace), trace.$v, pscount))
-#   end
-#   :($(Expr(:block, add_exprs..., :model)))
-# end
-
 macro conjugate_model(model_expr)
   @capture(model_expr, struct (M_{Vars__} | M_) <: ConjugateModel fields__ end)
   variables = [f.args[1] for f in fields]
@@ -155,6 +124,35 @@ macro conjugate_model(model_expr)
       rand_fn_expr, 
       add_obs_fn_expr))))
 end
+
+# @generated function logpdf(model::M, trace) where M <: ConjugateModel
+#   variables = fieldnames(M)
+#   logpdf_exprs = [:(logpdf($v(model, trace), trace.$v)) for v in variables]
+#   :(+($(logpdf_exprs...)))
+# end
+
+# @generated function rand(rng::Distributions.AbstractRNG, model::M) where 
+#   M <: ConjugateModel
+
+#   variables = fieldnames(M)
+#   init_trace_expr = :(trace0 = @NamedTuple{}(()))
+#   sample_exprs = map(enumerate(variables)) do (i, v)
+#     :($(Symbol(:trace, i)) = ($(Symbol(:trace, i-1))..., 
+#                               $v=rand(rng, $v(model, $(Symbol(:trace, i-1))))))
+#   end
+#   :($(Expr(:block, 
+#     init_trace_expr, 
+#     sample_exprs..., 
+#     Symbol(:trace, length(variables)))))
+# end
+
+# @generated function add_obs!(model::M, trace, pscount) where M <: ConjugateModel
+#   variables = fieldnames(M)
+#   add_exprs = map(variables) do v 
+#     :(add_obs!($v(model, trace), trace.$v, pscount))
+#   end
+#   :($(Expr(:block, add_exprs..., :model)))
+# end
 
 end # module
 
