@@ -86,8 +86,7 @@ end
 """
     insert!(category, score, into=chart_cell)
 """
-function insert!(category::C, score::S; into::ChartCell{C, S}) where {C, S}
-  chart_cell = into
+function insert!(chart_cell::ChartCell, category, score)
   if haskey(chart_cell, category)
     chart_cell[category] += score
   else
@@ -95,13 +94,15 @@ function insert!(category::C, score::S; into::ChartCell{C, S}) where {C, S}
   end
 end
 
-function chartparse(grammar::G, scoring, terminalss::Vector{Vector{C}}) where
-  {C, R <: AbstractRule{C}, G <: AbstractGrammar{R}}
+function chartparse(grammar::G, scoring, terminalss) where {
+  C, R <: AbstractRule{C}, G <: AbstractGrammar{R}
+}
   n = length(terminalss) # sequence length
   S = score_type(grammar, scoring)
   chart = empty_chart(C, S, n)
   stack = Vector{Tuple{C, R}}() # channel for communicating completions
   # using a single stack is much more efficient than constructing multiple arrays
+  stack_unary = Vector{Tuple{C, S}}()
 
   score(lhs, rule) = calc_score(grammar, scoring, lhs, rule)
 
@@ -110,7 +111,7 @@ function chartparse(grammar::G, scoring, terminalss::Vector{Vector{C}}) where
       push_completions!(grammar, stack, terminal)
       while !isempty(stack)
         (lhs, rule) = pop!(stack)
-        insert!(lhs, score(lhs, rule), into=chart[i, i])
+        insert!(chart[i, i], lhs, score(lhs, rule))
       end
     end
   end
@@ -118,16 +119,31 @@ function chartparse(grammar::G, scoring, terminalss::Vector{Vector{C}}) where
   for l in 1:n-1 # length
     for i in 1:n-l # start index
       j = i + l # end index
+
+      # binary completions
       for k in i:j-1 # split index
         for (rhs1, s1) in chart[i, k]
           for (rhs2, s2) in chart[k+1, j]
             push_completions!(grammar, stack, rhs1, rhs2)
             while !isempty(stack)
               (lhs, rule) = pop!(stack)
-              insert!(lhs, score(lhs, rule) * s1 * s2, into=chart[i, j])
+              insert!(chart[i, j], lhs, score(lhs, rule) * s1 * s2)
             end
           end
         end
+      end
+
+      # unary completions
+      for (rhs, s) in chart[i, j]
+        push_completions!(grammar, stack, rhs)
+        while !isempty(stack)
+          (lhs, rule) = pop!(stack)
+          push!(stack_unary, (lhs, score(lhs, rule) * s))
+        end
+      end
+      while !isempty(stack_unary)
+        (lhs, s) = pop!(stack_unary)
+        insert!(chart[i, j], lhs, s)
       end
     end
   end
