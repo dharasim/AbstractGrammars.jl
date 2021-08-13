@@ -1,5 +1,6 @@
 using Test
 using Distributions
+using AbstractGrammars
 using AbstractGrammars.ConjugateModels
 
 ###################################
@@ -38,8 +39,11 @@ value(m::Mixture, trace) = m.value[trace.component]
         pscount + 10
 end
 
-include("../src/BinaryCountGrammar.jl")
-import .BinaryCountGrammar
+###############################
+### Test binary-tree counts ###
+###############################
+
+import AbstractGrammars.BinaryCountGrammar
 @testset "count all binary trees" begin
   BinaryCountGrammar.test_binary_count_grammar()
 end

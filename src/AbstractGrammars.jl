@@ -1,45 +1,25 @@
 module AbstractGrammars
 
-# Imports
-# using Distributions
-# using LogProbs
+export 
+# utils
+normalize,
 
-# using SpecialFunctions: logbeta
-# using MacroTools: @capture
+# Rule and grammar interface
+AbstractRule, AbstractGrammar, initial_category, push_completions!,
 
-# import Base: rand, minimum, maximum
-# import Distributions: sampler, logpdf, cdf, quantile
-# import StatsBase: params
+# Scorings
+Scoring, score_type, calc_score, InsideScoring, CountScoring,
 
-export AbstractRule, 
-       AbstractGrammar, 
-       initial_category,
-       push_completions!
-export Scoring,
-       score_type,
-       calc_score,
-       InsideScoring,
-       CountScoring
-export chartparse
+# Chart parsing
+Chart, chartparse
 
-#############
-### Utils ###
-#############
+# include main content
+include("core.jl")
 
-normalize(xs) = xs ./ sum(xs)
-
-################
-### Includes ###
-################
-
-include("interfaces.jl")
-include("scorings.jl")
-include("chartparsing.jl")
+# include submodules
 include("ConjugateModels.jl")
-
-###############################
-### Generic headed grammars ###
-###############################
+include("BinaryCountGrammar.jl")
+include("HeadedGrammars.jl")
 
 # @enum HeadedCategoryTag start_category terminal nonterminal
 

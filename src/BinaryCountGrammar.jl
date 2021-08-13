@@ -1,7 +1,7 @@
 module BinaryCountGrammar
 
-using AbstractGrammars
-import AbstractGrammars: initial_category, push_completions!
+using  ..AbstractGrammars
+import ..AbstractGrammars: initial_category, push_completions!
 
 export test_binary_count_grammar
 
