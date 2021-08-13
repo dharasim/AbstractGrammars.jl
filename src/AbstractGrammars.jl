@@ -42,15 +42,15 @@ abstract type AbstractRule{Category} end
 
 abstract type AbstractGrammar{Rule<:AbstractRule} end
 
-function initial_category(::G) where G<:AbstractGrammar
+function initial_category(grammar::G) where G<:AbstractGrammar
   error("Function initial_category not implemented for $G.")
 end
 
-function push_completions!(stack, ::G, c) where G<:AbstractGrammar
+function push_completions!(grammar::G, stack, c) where G<:AbstractGrammar
   error("Function push_completions! (unary) not implemented for $G.")
 end
 
-function push_completions!(stack, ::G, c1, c2) where G<:AbstractGrammar
+function push_completions!(grammar::G, stack, c1, c2) where G<:AbstractGrammar
   error("Function push_completions! (binary) not implemented for $G.")
 end
 
@@ -68,13 +68,13 @@ function score_type(grammar::AbstractGrammar, scoring::Scoring)
   score_type(typeof(grammar), typeof(scoring))
 end
 
-function score_type(::Type{G}, ::Type{S}) where {G <: AbstractGrammar, S <: Scoring}
+function score_type(::Type{G}, ::Type{S}) where 
+  {G <: AbstractGrammar, S <: Scoring}
   error("Function score_type not implemented for $G with $S.")
 end
 
 function calc_score(grammar::G, scoring::S, lhs, rule) where 
   {G <: AbstractGrammar, S <: Scoring}
-
   error("Function calc_score not implemented for $G with $S.")
 end
 
@@ -133,7 +133,7 @@ function chartparse(grammar::G, scoring, terminalss::Vector{Vector{C}}) where
 
   for (i, terminals) in enumerate(terminalss)
     for terminal in terminals
-      push_completions!(stack, grammar, terminal)
+      push_completions!(grammar, stack, terminal)
       while !isempty(stack)
         (lhs, rule) = pop!(stack)
         insert!(lhs, score(lhs, rule), into=chart[i, i])
@@ -147,7 +147,7 @@ function chartparse(grammar::G, scoring, terminalss::Vector{Vector{C}}) where
       for k in i:j-1 # split index
         for (rhs1, s1) in chart[i, k]
           for (rhs2, s2) in chart[k+1, j]
-            push_completions!(stack, grammar, rhs1, rhs2)
+            push_completions!(grammar, stack, rhs1, rhs2)
             while !isempty(stack)
               (lhs, rule) = pop!(stack)
               insert!(lhs, score(lhs, rule) * s1 * s2, into=chart[i, j])
