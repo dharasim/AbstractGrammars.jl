@@ -8,12 +8,14 @@ normalize,
 AbstractRule, AbstractGrammar, initial_category, push_completions!,
 
 # Scorings
-Scoring, score_type, calc_score, InsideScoring, CountScoring,
+Scoring, score_type, calc_score, 
+InsideScoring, CountScoring, BooleanScoring,
+CompactForrestScoring, 
+TreeDistScoring, sample_monom, sample_monom!,
 
 # Chart parsing
 Chart, chartparse
 
-# include main content
 include("core.jl")
 
 # include submodules

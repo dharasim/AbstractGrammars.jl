@@ -92,9 +92,9 @@ start_categories = Set([first(nonterminals)])
 
 grammar = Grammar(nt_rules, start_categories, termination, fromTerminal)
 
-terminalss = [[rand(terminals)] for _ in 1:100]
+terminalss = [[rand(terminals)] for _ in 1:70]
 @time chart = chartparse(grammar, CountScoring(), terminalss)
-chart[1,10][initial_category(grammar)]
+chart[1,70][initial_category(grammar)]
 
 
 
@@ -112,9 +112,12 @@ start_categories = Set(nonterminals)
 
 grammar = Grammar(nt_rules, start_categories, termination, fromTerminal)
 
-terminalss = [[rand(terminals)] for _ in 1:100]
+terminalss = [[rand(terminals)] for _ in 1:40]
 @time chart = chartparse(grammar, CountScoring(), terminalss)
-chart[1,100][initial_category(grammar)]
+chart[1,40][initial_category(grammar)]
+@time chart = AbstractGrammars.chartparse_optimized(grammar, CompactForrestScoring(), terminalss)
+chart[1,40][initial_category(grammar)]
+
 
 
 
