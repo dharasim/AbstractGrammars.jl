@@ -5,7 +5,7 @@ export
 normalize,
 
 # Rule and grammar interface
-AbstractRule, AbstractGrammar, initial_category, push_completions!,
+AbstractRule, AbstractGrammar, App, apply, initial_category, push_completions!,
 
 # Scorings
 Scoring, score_type, calc_score, 

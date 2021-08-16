@@ -27,6 +27,21 @@ function push_completions!(grammar::G, stack, c1, c2) where G<:AbstractGrammar
   error("Function push_completions! (binary) not implemented for $G.")
 end
 
+# rule application
+struct App{C, R <: AbstractRule{C}}
+  lhs  :: C
+  rule :: R
+end
+
+function App(grammar::AbstractGrammar{R}, lhs, rule) where 
+  {C, R <: AbstractRule{C}}
+  App{C, R}(lhs, rule)
+end
+
+apply(::AbstractGrammar, rule, category) = apply(rule, category)
+apply(grammar::AbstractGrammar, app::App) = apply(grammar, app.rule, app.lhs)
+
+
 # function logpdf(grammar, lhs, rule) end
 # function rand_rule(grammar, lhs) end
 # function observe_rule!(grammar, lhs, rule, pseudocount) end
@@ -277,24 +292,29 @@ function insert!(chart_cell::ChartCell, scoring, category, score)
   end
 end
 
+struct ScoredCategory{C, S}
+  category :: C
+  score    :: S
+end
+
 function chartparse(grammar::G, scoring, terminalss) where {
   C, R <: AbstractRule{C}, G <: AbstractGrammar{R}
 }
   n = length(terminalss) # sequence length
   S = score_type(grammar, scoring)
   chart = empty_chart(C, S, n)
-  stack = Vector{Tuple{C, R}}() # channel for communicating completions
+  stack = Vector{App{C, R}}() # channel for communicating completions
   # using a single stack is much more efficient than constructing multiple arrays
-  stack_unary = Vector{Tuple{C, S}}()
+  stack_unary = Vector{ScoredCategory{C, S}}()
 
-  score(lhs, rule) = ruleapp_score(scoring, grammar, lhs, rule)
+  score(app) = ruleapp_score(scoring, grammar, app.lhs, app.rule)
 
   for (i, terminals) in enumerate(terminalss)
     for terminal in terminals
       push_completions!(grammar, stack, terminal)
       while !isempty(stack)
-        (lhs, rule) = pop!(stack)
-        insert!(chart[i, i], scoring, lhs, score(lhs, rule))
+        app = pop!(stack)
+        insert!(chart[i, i], scoring, app.lhs, score(app))
       end
     end
   end
@@ -302,19 +322,15 @@ function chartparse(grammar::G, scoring, terminalss) where {
   for l in 1:n-1 # length
     for i in 1:n-l # start index
       j = i + l # end index
-
       # binary completions
       for k in i:j-1 # split index
         for (rhs1, s1) in chart[i, k]
           for (rhs2, s2) in chart[k+1, j]
             push_completions!(grammar, stack, rhs1, rhs2)
             while !isempty(stack)
-              # (lhs, rule) = pop!(stack)
-              lhs_rule = pop!(stack)
-              lhs = lhs_rule[1]
-              rule = lhs_rule[2]
-              s = mul_scores(scoring, score(lhs, rule), s1, s2)
-              insert!(chart[i, j], scoring, lhs, s)
+              app = pop!(stack)
+              s = mul_scores(scoring, score(app), s1, s2)
+              insert!(chart[i, j], scoring, app.lhs, s)
             end
           end
         end
@@ -324,83 +340,17 @@ function chartparse(grammar::G, scoring, terminalss) where {
       for (rhs, s) in chart[i, j]
         push_completions!(grammar, stack, rhs)
         while !isempty(stack)
-          (lhs, rule) = pop!(stack)
-          push!(stack_unary, (lhs, mul_scores(scoring, score(lhs, rule), s)))
+          app = pop!(stack)
+          push!(stack_unary, 
+            ScoredCategory{C,S}(app.lhs, mul_scores(scoring, score(app), s)))
         end
       end
       while !isempty(stack_unary)
-        (lhs, s) = pop!(stack_unary)
-        insert!(chart[i, j], scoring, lhs, s)
+        sc = pop!(stack_unary) # pop a scored category
+        insert!(chart[i, j], scoring, sc.category, sc.score)
       end
     end
   end
 
-  chart
-end
-
-function chartparse_optimized(grammar::G, scoring, terminalss) where {
-  C, R <: AbstractRule{C}, G <: AbstractGrammar{R}
-}
-  n = length(terminalss) # sequence length
-  S = score_type(grammar, scoring)
-  chart = empty_chart(C, S, n)
-  stack = Vector{Tuple{C, R}}() # channel for communicating completions
-  # using a single stack is much more efficient than constructing multiple arrays
-  stack_unary = Vector{Tuple{C, S}}()
-
-  score(lhs, rule) = calc_score(grammar, scoring, lhs, rule)
-
-  for (i, terminals) in enumerate(terminalss)
-    for terminal in terminals
-      push_completions!(grammar, stack, terminal)
-      while !isempty(stack)
-        (lhs, rule) = pop!(stack)
-        insert!(chart[i, i], lhs, score(lhs, rule))
-      end
-    end
-  end
-
-  for l in 1:n-1 # length
-    for i in 1:n-l # start index
-      j = i + l # end index
-
-      # binary completions
-      for k in i:j-1 # split index
-        for (rhs1, s1) in chart[i, k]
-          # rhs1 = rhs1_s1[1]
-          # s1   = rhs1_s1[2]
-          for (rhs2, s2) in chart[k+1, j]
-            # rhs2 = rhs2_s2[1]
-            # s2   = rhs2_s2[2]
-            push_completions!(grammar, stack, rhs1, rhs2)
-            while !isempty(stack)
-              lhs_rule = pop!(stack)
-              lhs  = lhs_rule[1]
-              rule = lhs_rule[2]
-              insert!(chart[i, j], lhs, score(lhs, rule) * s1 * s2)
-            end
-          end
-        end
-      end
-
-      # unary completions
-      for (rhs, s) in chart[i, j]
-        push_completions!(grammar, stack, rhs)
-        while !isempty(stack)
-          lhs_rule = pop!(stack)
-            lhs  = lhs_rule[1]
-            rule = lhs_rule[2]
-          push!(stack_unary, (lhs, score(lhs, rule) * s))
-        end
-      end
-      while !isempty(stack_unary)
-        lhs_s = pop!(stack_unary)
-        lhs = lhs_s[1]
-        s   = lhs_s[2]
-        insert!(chart[i, j], lhs, s)
-      end
-    end
-  end
-
-  chart
+  return chart
 end
