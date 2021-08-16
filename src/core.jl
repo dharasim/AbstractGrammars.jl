@@ -1,3 +1,6 @@
+using LogProbs
+using Distributions: logpdf
+
 #############
 ### Utils ###
 #############
@@ -43,14 +46,20 @@ function score_type(::Type{G}, ::Type{S}) where
   error("Function score_type not implemented for $G with $S.")
 end
 
-function calc_score(grammar::G, scoring::S, lhs, rule) where 
-  {G <: AbstractGrammar, S <: Scoring}
-  error("Function calc_score not implemented for $G with $S.")
+function ruleapp_score(scoring, grammar, lhs, rule)
+  error("Function ruleapp_score not implemented")
 end
 
-# imports for scoring implementations
-# each score type must be a semiring
-import Base: zero, iszero, one, isone, +, * 
+function add_scores(scoring, left, right) 
+  error("Function add_scores not implemented") 
+end
+
+function mul_scores(scoring, left, right)
+  error("Function mul_scores not implemented") 
+end
+
+mul_scores(scoring::Scoring, s1, s2, s3) = 
+  mul_scores(scoring, s1, mul_scores(scoring, s2, s3))
 
 ######################
 ### Inside scoring ###
@@ -58,9 +67,10 @@ import Base: zero, iszero, one, isone, +, *
 
 struct InsideScoring <: Scoring end
 score_type(::Type{<:AbstractGrammar}, ::Type{InsideScoring}) = LogProb
-function calc_score(grammar::AbstractGrammar, ::InsideScoring, lhs, rule)
-  LogProb(logpdf(grammar, lhs, rule))
-end
+ruleapp_score(::InsideScoring, grammar::AbstractGrammar, lhs, rule) =
+  LogProb(logpdf(grammar, lhs, rule), islog=true)
+add_scores(::InsideScoring, left, right) = left + right
+mul_scores(::InsideScoring, left, right) = left * right
 
 #####################
 ### Count scoring ###
@@ -68,25 +78,19 @@ end
 
 struct CountScoring <: Scoring end
 score_type(::Type{<:AbstractGrammar}, ::Type{CountScoring}) = Int
-calc_score(::AbstractGrammar, ::CountScoring, ::Any, ::Any) = 1
+ruleapp_score(::CountScoring, ::AbstractGrammar, ::Any, ::Any) = 1
+add_scores(::CountScoring, left, right) = left + right
+mul_scores(::CountScoring, left, right) = left * right
 
 #######################
 ### Boolean scoring ###
 #######################
 
-struct BoolScore value::Bool end
-zero(::BoolScore) = BoolScore(false)
-zero(::Type{BoolScore}) = BoolScore(false)
-iszero(x::BoolScore) = x.value === false
-one(::BoolScore) = BoolScore(true)
-one(::Type{BoolScore}) = BoolScore(true)
-isone(x::BoolScore) = x.value === true
-+(x::BoolScore, y::BoolScore) = BoolScore(x.value || y.value)
-*(x::BoolScore, y::BoolScore) = BoolScore(x.value && y.value)
-
 struct BooleanScoring <: Scoring end
-score_type(::Type{<:AbstractGrammar}, ::Type{BooleanScoring}) = BoolScore
-calc_score(::AbstractGrammar, ::BooleanScoring, ::Any, ::Any) = one(BoolScore)
+score_type(::Type{<:AbstractGrammar}, ::Type{BooleanScoring}) = Bool
+ruleapp_score(::AbstractGrammar, ::BooleanScoring, ::Any, ::Any) = true
+add_scores(::BooleanScoring, left, right) = left || right
+mul_scores(::BooleanScoring, left, right) = left && right
 
 ##############################
 ### Free-semiring scorings ###
@@ -107,13 +111,12 @@ struct Mul{S,T} <: ScoredFree{S,T}
   right::ScoredFree{S,T}
 end
 
-import Base: show
+import Base: show, zero, iszero, one, isone, +, *
 show(io::IO, x::Add{S,T}) where {S,T} =
   print(io, "Add{$S, $T}($(x.score), ...left, ...right)")
 show(io::IO, x::Mul{S,T}) where {S,T} =
   print(io, "Mul{$S, $T}($(x.score), ...left, ...right)")
 
-zero(::ScoredFree{S,T}) where {S,T} = Zero{S,T}()
 zero(::Type{<:ScoredFree{S,T}}) where {S,T} = Zero{S,T}()
 iszero(::Zero) = true
 iszero(::ScoredFree) = false
@@ -156,24 +159,26 @@ sample_monom!(vals, a::Add{S,T}) where {S,T} =
 sample_monom!(vals, m::Mul) =
   (sample_monom!(vals, m.left); sample_monom!(vals, m.right))
 
-struct CompactForrestScoring <: Scoring end
-score_type(::Type{<:AbstractGrammar{R}}, ::Type{CompactForrestScoring}) where 
-  {C, R <: AbstractRule{C}} = ScoredFree{BoolScore, Tuple{C, R}}
-calc_score(::AbstractGrammar{R}, ::CompactForrestScoring, lhs, rule) where
-  {C, R <: AbstractRule{C}} = 
-    Value{BoolScore, Tuple{C, R}}(one(BoolScore), (lhs, rule))
+# struct CompactForrestScoring <: Scoring end
+# score_type(::Type{<:AbstractGrammar{R}}, ::Type{CompactForrestScoring}) where 
+#   {C, R <: AbstractRule{C}} = ScoredFree{BoolScore, Tuple{C, R}}
+# calc_score(::AbstractGrammar{R}, ::CompactForrestScoring, lhs, rule) where
+#   {C, R <: AbstractRule{C}} = 
+#     Value{BoolScore, Tuple{C, R}}(one(BoolScore), (lhs, rule))
 
 struct TreeDistScoring <: Scoring end
 score_type(::Type{<:AbstractGrammar{R}}, ::Type{TreeDistScoring}) where 
   {C, R <: AbstractRule{C}} = ScoredFree{LogProb, Tuple{C, R}}
-calc_score(grammar::AbstractGrammar{R}, ::TreeDistScoring, lhs, rule) where
+ruleapp_score(::TreeDistScoring, grammar::AbstractGrammar{R}, lhs, rule) where
   {C, R <: AbstractRule{C}} =
     Value{LogProb, Tuple{C,R}}(LogProb(logpdf(grammar, lhs, rule)), (lhs, rule))
+add_scores(::TreeDistScoring, left, right) = left + right
+mul_scores(::TreeDistScoring, left, right) = left * right
 
-using Test
-S, T = Int, Symbol
-@test zero(One{S,T}) === zero(One{S,T}()) === Zero{S,T}()
-@test one(Zero{S,T}) === one(Zero{S,T}()) === One{S,T}()
+# using Test
+# S, T = Int, Symbol
+# @test zero(One{S,T}) === zero(One{S,T}()) === Zero{S,T}()
+# @test one(Zero{S,T}) === one(Zero{S,T}()) === One{S,T}()
 
 ######################################################################
 ### Free-semiring scorings with manually managed pointer structure ###
@@ -181,8 +186,7 @@ S, T = Int, Symbol
 
 @enum ScoreTag ADD MUL VAL
 
-struct ScoredFreeStored{S,T}
-  store      :: Vector{ScoredFreeStored{S,T}}
+struct ScoredFreeEntry{S,T}
   tag        :: ScoreTag
   score      :: S
   value      :: T
@@ -190,38 +194,58 @@ struct ScoredFreeStored{S,T}
   leftIndex  :: Int
   rightIndex :: Int
 
-  function ScoredFreeStored(
-    store :: Vector{ScoredFreeStored{S,T}}, 
-    op    :: Union{typeof(+), typeof(*)}, 
-    left  :: ScoredFreeStored{S,T}, 
-    right :: ScoredFreeStored{S,T}
+  function ScoredFreeEntry(
+    store :: Vector{ScoredFreeEntry{S,T}},
+    op    :: Union{typeof(+), typeof(*)},
+    left  :: ScoredFreeEntry{S,T}, 
+    right :: ScoredFreeEntry{S,T}
   ) where {S,T}
     tag(::typeof(+)) = ADD
     tag(::typeof(*)) = MUL
     score = op(left.score, right.score)
     value = left.value # dummy value
     index = length(store) + 1
-    x = new{S,T}(store, tag(op), score, value, index, left.index, right.index)
+    x = new{S,T}(tag(op), score, value, index, left.index, right.index)
     push!(store, x)
-    x
+    index
   end
 
-  function ScoredFreeStored(
-    store :: Vector{ScoredFreeStored{S,T}},
+  function ScoredFreeEntry(
+    store :: Vector{ScoredFreeEntry{S,T}},
     score :: S,
     value :: T
   ) where {S,T}
     index = length(store) + 1
-    x = new{S,T}(store, VAL, score, value, index, -1, -1)
+    x = new{S,T}(VAL, score, value, index, -1, -1)
     push!(store, x)
-    x
+    index
   end
 end
 
-struct Foo{T}
-  ts :: Vector{T}
-  t  :: T
+# Weighted Derivation Scoring (WDS)
+struct WDS{S,T} <: Scoring
+  store :: Vector{ScoredFreeEntry{S,T}}
 end
+
+function WDS(::G) where
+  {C, R <: AbstractRule{C}, G <: AbstractGrammar{R}}
+  WDS(ScoredFreeEntry{LogProb, Tuple{C, R}}[])
+end
+
+score_type(::Type{<:AbstractGrammar}, ::Type{<:WDS}) = Int
+ruleapp_score(s::WDS, grammar, lhs, rule) = 
+  ScoredFreeEntry(
+    s.store, 
+    LogProb(logpdf(grammar,lhs,rule), islog=true), 
+    (lhs, rule)
+  )
+add_scores(s::WDS, i, j) = 
+  ScoredFreeEntry(s.store, +, s.store[i], s.store[j])
+mul_scores(s::WDS, i, j) = 
+  ScoredFreeEntry(s.store, *, s.store[i], s.store[j])
+
+
+
 
 ########################################################
 ### Free-semiring scorings with re-computable scores ###
@@ -245,11 +269,11 @@ end
 """
     insert!(category, score, into=chart_cell)
 """
-function insert!(chart_cell::ChartCell, category, score)
+function insert!(chart_cell::ChartCell, scoring, category, score)
   if haskey(chart_cell, category)
-    chart_cell[category] += score
+    chart_cell[category] = add_scores(scoring, chart_cell[category], score)
   else
-    chart_cell[category]  = score
+    chart_cell[category] = score
   end
 end
 
@@ -263,14 +287,14 @@ function chartparse(grammar::G, scoring, terminalss) where {
   # using a single stack is much more efficient than constructing multiple arrays
   stack_unary = Vector{Tuple{C, S}}()
 
-  score(lhs, rule) = calc_score(grammar, scoring, lhs, rule)
+  score(lhs, rule) = ruleapp_score(scoring, grammar, lhs, rule)
 
   for (i, terminals) in enumerate(terminalss)
     for terminal in terminals
       push_completions!(grammar, stack, terminal)
       while !isempty(stack)
         (lhs, rule) = pop!(stack)
-        insert!(chart[i, i], lhs, score(lhs, rule))
+        insert!(chart[i, i], scoring, lhs, score(lhs, rule))
       end
     end
   end
@@ -285,8 +309,12 @@ function chartparse(grammar::G, scoring, terminalss) where {
           for (rhs2, s2) in chart[k+1, j]
             push_completions!(grammar, stack, rhs1, rhs2)
             while !isempty(stack)
-              (lhs, rule) = pop!(stack)
-              insert!(chart[i, j], lhs, score(lhs, rule) * s1 * s2)
+              # (lhs, rule) = pop!(stack)
+              lhs_rule = pop!(stack)
+              lhs = lhs_rule[1]
+              rule = lhs_rule[2]
+              s = mul_scores(scoring, score(lhs, rule), s1, s2)
+              insert!(chart[i, j], scoring, lhs, s)
             end
           end
         end
@@ -297,12 +325,12 @@ function chartparse(grammar::G, scoring, terminalss) where {
         push_completions!(grammar, stack, rhs)
         while !isempty(stack)
           (lhs, rule) = pop!(stack)
-          push!(stack_unary, (lhs, score(lhs, rule) * s))
+          push!(stack_unary, (lhs, mul_scores(scoring, score(lhs, rule), s)))
         end
       end
       while !isempty(stack_unary)
         (lhs, s) = pop!(stack_unary)
-        insert!(chart[i, j], lhs, s)
+        insert!(chart[i, j], scoring, lhs, s)
       end
     end
   end

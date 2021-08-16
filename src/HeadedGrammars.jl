@@ -3,78 +3,113 @@ module Headed
 using AbstractGrammars
 import AbstractGrammars: initial_category, push_completions!
 
-abstract type Category{T,NT} end
-struct Start{T,NT}         <: Category{T,NT} end
-struct Terminal{T,NT}      <: Category{T,NT} label::T end
-struct NonTerminal{T,NT}   <: Category{T,NT} label::NT end
+begin
+  abstract type Category{T,NT} end
+  struct Start{T,NT}         <: Category{T,NT} end
+  struct Terminal{T,NT}      <: Category{T,NT} label::T end
+  struct NonTerminal{T,NT}   <: Category{T,NT} label::NT end
 
-abstract type Rule{T,NT}    <: AbstractRule{Category{T,NT}} end
-struct Termination{T,NT,TT} <: Rule{T,NT} toTerminal::TT end
-struct StartRule{T,NT}      <: Rule{T,NT} category::NonTerminal{T,NT} end
+  abstract type Rule{T,NT}    <: AbstractRule{Category{T,NT}} end
+  struct Termination{T,NT,TT} <: Rule{T,NT} toTerminal::TT end
+  struct StartRule{T,NT}      <: Rule{T,NT} category::NonTerminal{T,NT} end
 
-abstract type NTRule{T,NT} <: Rule{T,NT} end
-struct LeftHeaded{T,NT}    <: NTRule{T,NT} dependent::NonTerminal{T,NT} end
-struct RightHeaded{T,NT}   <: NTRule{T,NT} dependent::NonTerminal{T,NT} end
-struct Duplication{T,NT}   <: NTRule{T,NT} end
+  abstract type NTRule{T,NT} <: Rule{T,NT} end
+  struct LeftHeaded{T,NT}    <: NTRule{T,NT} dependent::NonTerminal{T,NT} end
+  struct RightHeaded{T,NT}   <: NTRule{T,NT} dependent::NonTerminal{T,NT} end
+  struct Duplication{T,NT}   <: NTRule{T,NT} end
 
-# by default a rule is not applicable
-(r::Rule)(c::Category) = nothing
+  # by default a rule is not applicable
+  (r::Rule)(c::Category) = nothing
 
-(r::LeftHeaded)(c::NonTerminal)  = c == r.dependent ? nothing : (c, r.dependent)
-(r::RightHeaded)(c::NonTerminal) = c == r.dependent ? nothing : (r.dependent, c)
-(::Duplication)(c::NonTerminal)  = (c, c)
-(r::StartRule)(::Start)          = (r.category,)
-(r::Termination)(c::NonTerminal) = r.toTerminal(c)
+  (r::LeftHeaded)(c::NonTerminal)  = c == r.dependent ? nothing : (c, r.dependent)
+  (r::RightHeaded)(c::NonTerminal) = c == r.dependent ? nothing : (r.dependent, c)
+  (::Duplication)(c::NonTerminal)  = (c, c)
+  (r::StartRule)(::Start)          = (r.category,)
+  (r::Termination)(c::NonTerminal) = r.toTerminal(c)
 
-struct Grammar{T,NT,TT,FT} <: AbstractGrammar{Rule{T,NT}}
-  nt_rules         :: Set{NTRule{T,NT}}
-  start_categories :: Set{NonTerminal{T,NT}}
-  termination      :: Termination{T,NT,TT}
-  fromTerminal     :: FT
-end
-
-initial_category(::Grammar{T,NT,TT,FT}) where {T,NT,TT,FT} = Start{T,NT}()
-duplication(::Grammar{T,NT,TT,FT}) where {T,NT,TT,FT} = Duplication{T,NT}()
-
-function push_completions!(grammar::Grammar, stack, c::Terminal)
-  for lhs in grammar.fromTerminal(c)
-    push!(stack, (lhs, grammar.termination))
+  struct Grammar{T,NT,TT,FT} <: AbstractGrammar{Rule{T,NT}}
+    nt_rules         :: Set{NTRule{T,NT}}
+    start_categories :: Set{NonTerminal{T,NT}}
+    termination      :: Termination{T,NT,TT}
+    fromTerminal     :: FT
   end
-end
 
-function push_completions!(grammar::Grammar, stack, c::NonTerminal)
-  if c in grammar.start_categories
-    push!(stack, (initial_category(grammar), StartRule(c)))
-  end
-end
+  initial_category(::Grammar{T,NT,TT,FT}) where {T,NT,TT,FT} = Start{T,NT}()
+  duplication(::Grammar{T,NT,TT,FT}) where {T,NT,TT,FT} = Duplication{T,NT}()
 
-function push_completions!(
-  grammar::Grammar, stack, c1::NonTerminal, c2::NonTerminal
-)
-  if c1 == c2
-    if duplication(grammar) in grammar.nt_rules
-      push!(stack, (c1, duplication(grammar)))
-    end
-  else
-    if LeftHeaded(c2) in grammar.nt_rules
-      push!(stack, (c1, LeftHeaded(c2)))
-    end
-    if RightHeaded(c1) in grammar.nt_rules
-      push!(stack, (c2, RightHeaded(c1)))
+  function push_completions!(grammar::Grammar, stack, c::Terminal)
+    for lhs in grammar.fromTerminal(c)
+      push!(stack, (lhs, grammar.termination))
     end
   end
-end
 
-function push_completions!(grammar::Grammar, stack, c1, c2)
-  nothing
+  function push_completions!(grammar::Grammar, stack, c::NonTerminal)
+    if c in grammar.start_categories
+      push!(stack, (initial_category(grammar), StartRule(c)))
+    end
+  end
+
+  function push_completions!(
+    grammar::Grammar, stack, c1::NonTerminal, c2::NonTerminal
+  )
+    if c1 == c2
+      if duplication(grammar) in grammar.nt_rules
+        push!(stack, (c1, duplication(grammar)))
+      end
+    else
+      if LeftHeaded(c2) in grammar.nt_rules
+        push!(stack, (c1, LeftHeaded(c2)))
+      end
+      if RightHeaded(c1) in grammar.nt_rules
+        push!(stack, (c2, RightHeaded(c1)))
+      end
+    end
+  end
+
+  function push_completions!(grammar::Grammar, stack, c1, c2)
+    nothing
+  end
 end
 
 using Test
-T, NT = String, Symbol
-nt = NonTerminal{T,NT}(:bar)
-LeftHeaded(nt)
-lhr = LeftHeaded{T,NT}(NonTerminal{T,NT}(:foo))
-@test lhr(nt) == map(NonTerminal{T,NT}, (:bar, :foo))
+begin
+  T, NT = String, Symbol
+  nt = NonTerminal{T,NT}(:bar)
+  LeftHeaded(nt)
+  lhr = LeftHeaded{T,NT}(NonTerminal{T,NT}(:foo))
+  @test lhr(nt) == map(NonTerminal{T,NT}, (:bar, :foo))
+end
+
+CategoryBits{T,NT} = Union{Start{T,NT}, Terminal{T,NT}, NonTerminal{T,NT}}
+RuleBits{T,NT} = Union{
+  StartRule{T,NT}, LeftHeaded{T,NT}, RightHeaded{T,NT}, Duplication{T,NT}}
+
+RuleBits{T,NT}
+
+apply 
+
+# rule application
+struct App{C,R}
+  category :: C
+  rule     :: R
+end
+
+Vector{App{Int, Union{Nothing, App{CategoryBits{T,NT}, RuleBits{T,NT}}}}}(undef, 10)
+
+function isplain(T::Type)
+  v = Vector{T}(undef, 1)
+  try
+    first(v)
+  catch e
+    return false
+  end
+  return true
+end
+
+isplain(Symbol)
+
+
+
 
 T, NT = String, Symbol
 nonterminals = map(NonTerminal{T, NT}, [:a, :b, :c1, :c2])
@@ -92,34 +127,43 @@ start_categories = Set([first(nonterminals)])
 
 grammar = Grammar(nt_rules, start_categories, termination, fromTerminal)
 
+import Distributions: logpdf
+logpdf(::Grammar, lhs, rule) = log(1)
+
 terminalss = [[rand(terminals)] for _ in 1:70]
-@time chart = chartparse(grammar, CountScoring(), terminalss)
-chart[1,70][initial_category(grammar)]
+scoring = AbstractGrammars.WDS(grammar)
+@time chart = chartparse(grammar, scoring, terminalss)
+idx = chart[1,70][initial_category(grammar)]
+scoring.store[idx]
 
 
 
-T, NT = String, Symbol
-nonterminals = map(NonTerminal{T, NT}, Symbol.(:a, 1:100))
-terminals = map(Terminal{T, NT}, string.("a", 1:100))
-toTerminal(c) = Terminal{T,NT}(string(c.label))
-termination = Termination{T,NT,typeof(toTerminal)}(toTerminal)
-fromTerminal(c) = [NonTerminal{T, NT}(Symbol(c.label))]
-nt_rules = Set([ 
-  Duplication{T,NT}(); 
-  map(LeftHeaded, nonterminals); 
-  map(RightHeaded, nonterminals)])
-start_categories = Set(nonterminals)
+begin
+  T, NT = String, Symbol
+  nonterminals = map(NonTerminal{T, NT}, Symbol.(:a, 1:100))
+  terminals = map(Terminal{T, NT}, string.("a", 1:100))
+  toTerminal(c) = Terminal{T,NT}(string(c.label))
+  termination = Termination{T,NT,typeof(toTerminal)}(toTerminal)
+  fromTerminal(c) = [NonTerminal{T, NT}(Symbol(c.label))]
+  nt_rules = Set([ 
+    Duplication{T,NT}(); 
+    map(LeftHeaded, nonterminals); 
+    map(RightHeaded, nonterminals)])
+  start_categories = Set(nonterminals)
+  grammar = Grammar(nt_rules, start_categories, termination, fromTerminal)
+end
 
-grammar = Grammar(nt_rules, start_categories, termination, fromTerminal)
+import ProfileVega
 
-terminalss = [[rand(terminals)] for _ in 1:40]
-@time chart = chartparse(grammar, CountScoring(), terminalss)
-chart[1,40][initial_category(grammar)]
-@time chart = AbstractGrammars.chartparse_optimized(grammar, CompactForrestScoring(), terminalss)
-chart[1,40][initial_category(grammar)]
+terminalss = [[rand(terminals)] for _ in 1:50]
+ProfileVega.@profview chart = chartparse(grammar, CountScoring(), terminalss)
+chart[1,50][initial_category(grammar)]
+scoring = AbstractGrammars.WDS(grammar)
+@time chart = chartparse(grammar, scoring, terminalss)
+idx = chart[1,50][initial_category(grammar)]
+scoring.store[idx]
 
-
-
+@time chart = chartparse(grammar, AbstractGrammars.TreeDistScoring(), terminalss)
 
 
 
