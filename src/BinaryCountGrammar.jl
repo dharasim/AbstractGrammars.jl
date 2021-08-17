@@ -28,15 +28,15 @@ end
 struct Grammar <: AbstractGrammar{Rule} end
 initial_category(::Grammar) = nonterminal
 
-function push_completions!(::Grammar, stack, c)
+function push_completions!(grammar::Grammar, stack, c)
   if c == terminal
-    push!(stack, (nonterminal, Rule(terminate)))
+    push!(stack, App(grammar, nonterminal, Rule(terminate)))
   end
 end
 
-function push_completions!(::Grammar, stack, c1, c2)
+function push_completions!(grammar::Grammar, stack, c1, c2)
   if c1 == nonterminal && c2 == nonterminal
-    push!(stack, (nonterminal, Rule(branch)))
+    push!(stack, App(grammar, nonterminal, Rule(branch)))
   end
 end
 

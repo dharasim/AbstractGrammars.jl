@@ -6,17 +6,6 @@ using Test
 
 # const tests = []
 
-# util
-function isplain(T::Type) 
-  v = Vector{T}(undef, 1)
-  try
-    first(v)
-  catch e
-    return false
-  end
-  return true
-end
-
 struct Start{T,NT}                 end
 struct Terminal{T,NT}    label::T  end
 struct NonTerminal{T,NT} label::NT end
@@ -118,44 +107,41 @@ rules = Set{Rule{T,NT}}([
   Duplication{T,NT}(); 
   map(LeftHeaded, nonterminals); 
   map(RightHeaded, nonterminals)])
-
 grammar = Grammar(rules, toTerminal, fromTerminal)
 
 import Distributions: logpdf
 logpdf(::Grammar, lhs, rule) = log(0.5)
 
-terminalss = [[rand(terminals)] for _ in 1:100]
-# scoring = AbstractGrammars.WDS(grammar)
-@time chart = chartparse(grammar, CountScoring(), terminalss)
-# idx = chart[1,70][initial_category(grammar)]
-# scoring.store[idx]
-chart
+terminalss = [[rand(terminals)] for _ in 1:70]
+@time chart = chartparse(grammar, InsideScoring(), terminalss)
+chart[1,70][initial_category(grammar)]
 
 
-begin
-  T, NT = String, Symbol
-  nonterminals = map(NonTerminal{T, NT}, Symbol.(:a, 1:100))
-  terminals = map(Terminal{T, NT}, string.("a", 1:100))
-  toTerminal(c) = Terminal{T,NT}(string(c.label))
-  termination = Termination{T,NT,typeof(toTerminal)}(toTerminal)
-  fromTerminal(c) = [NonTerminal{T, NT}(Symbol(c.label))]
-  nt_rules = Set([ 
-    Duplication{T,NT}(); 
-    map(LeftHeaded, nonterminals); 
-    map(RightHeaded, nonterminals)])
-  start_categories = Set(nonterminals)
-  grammar = Grammar(nt_rules, start_categories, termination, fromTerminal)
-end
+
+T, NT = Float64, Int
+nonterminals = map(NonTerminal{T, NT}, 1:100)
+terminals = map(Terminal{T, NT}, 1:100)
+toTerminal(c) = Terminal{T,NT}(float(c.label))
+fromTerminal(c) = [NonTerminal{T, NT}(Int(c.label))]
+rules = Set{Rule{T,NT}}([
+  StartRule(first(nonterminals));
+  Termination{T,NT}();
+  Duplication{T,NT}(); 
+  map(LeftHeaded, nonterminals); 
+  map(RightHeaded, nonterminals)])
+grammar = Grammar(rules, toTerminal, fromTerminal)
+
 
 import ProfileVega
 
-terminalss = [[rand(terminals)] for _ in 1:50]
-ProfileVega.@profview chart = chartparse(grammar, CountScoring(), terminalss)
+terminalss = [[rand(terminals)] for _ in 1:40]
+@time chart = chartparse(grammar, CountScoring(), terminalss)
 chart[1,50][initial_category(grammar)]
-scoring = AbstractGrammars.WDS(grammar)
-@time chart = chartparse(grammar, scoring, terminalss)
+scoring = AbstractGrammars.TDS(grammar)
+@ProfileVega.profview chart = chartparse(grammar, scoring, terminalss)
 idx = chart[1,50][initial_category(grammar)]
-scoring.store[idx]
+scoring.store
+eltype(scoring.store) |> isplain
 
 @time chart = chartparse(grammar, AbstractGrammars.TreeDistScoring(), terminalss)
 

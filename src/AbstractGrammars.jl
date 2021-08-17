@@ -2,7 +2,7 @@ module AbstractGrammars
 
 export 
 # utils
-normalize,
+normalize, isplain,
 
 # Rule and grammar interface
 AbstractRule, AbstractGrammar, App, apply, initial_category, push_completions!,
