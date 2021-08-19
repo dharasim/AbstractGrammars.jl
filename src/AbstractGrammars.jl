@@ -2,7 +2,7 @@ module AbstractGrammars
 
 export 
 # utils
-normalize, isplain,
+normalize, isplain, ⊣, default,
 
 # Rule and grammar interface
 AbstractRule, AbstractGrammar, App, apply, initial_category, push_completions!,
@@ -10,8 +10,7 @@ AbstractRule, AbstractGrammar, App, apply, initial_category, push_completions!,
 # Scorings
 Scoring, score_type, calc_score, 
 InsideScoring, CountScoring, BooleanScoring,
-CompactForrestScoring, 
-TreeDistScoring, sample_monom, sample_monom!,
+WDS, sample_derivations,
 
 # Chart parsing
 Chart, chartparse

@@ -1,16 +1,12 @@
 module Headed
 
 using AbstractGrammars
-import AbstractGrammars: apply, initial_category, push_completions!
+import AbstractGrammars: apply, initial_category, push_completions!, default
 using Test
 
-# check for the tag of an object
-⊣(tag, x) = x.tag == tag
-
-default(::Type{T}) where T <: Number = zero(T)
-default(::Type{Symbol}) = Symbol()
-# default(::Type{T}) where T <: AbstractString = one(T)
-# default(::Type{T}) where T <: AbstractVector = T()
+##################
+### Categories ###
+##################
 
 @enum CategoryTag start terminal nonterminal
 
@@ -26,7 +22,9 @@ nonterminal_category(T, nt) = Category(nonterminal, default(T), nt)
 
 default(::Type{Category{T,NT}}) where {T,NT} = start_category(T, NT)
 
-
+#############
+### Rules ###
+#############
 
 @enum RuleTag startrule terminate duplicate leftheaded rightheaded 
 
@@ -61,12 +59,9 @@ function apply(grammar::Grammar, r::Rule, c::Category)
   return nothing
 end
 
-initial_category(::Grammar{T,NT,TT,FT}) where {T,NT,TT,FT} = 
-  start_category(T, NT)
-duplication_rule(::Grammar{T,NT,TT,FT}) where {T,NT,TT,FT} = 
-  duplication_rule(T, NT)
-termination_rule(::Grammar{T,NT,TT,FT}) where {T,NT,TT,FT} =
-  termination_rule(T, NT)
+initial_category(::Grammar{T,NT,TT,FT}) where {T,NT,TT,FT} = start_category(T, NT)
+duplication_rule(::Grammar{T,NT,TT,FT}) where {T,NT,TT,FT} = duplication_rule(T, NT)
+termination_rule(::Grammar{T,NT,TT,FT}) where {T,NT,TT,FT} = termination_rule(T, NT)
  
 function push_completions!(grammar::Grammar, stack, c)
   if terminal ⊣ c
@@ -98,11 +93,11 @@ function push_completions!(grammar::Grammar, stack, c1, c2)
 end
 
 # tests
-T, NT = String, Symbol
-nt = nonterminal_category(T, :bar)
-lhr = leftheaded_rule(nonterminal_category(T, :foo))
+T, NT = Float64, Int
+nt = nonterminal_category(T, 1)
+lhr = leftheaded_rule(nonterminal_category(T, 2))
 grammar = Grammar(Set([lhr]), nothing, nothing)
-@test apply(grammar, lhr, nt) == nonterminal_category.(T, (:bar, :foo))
+@test apply(grammar, lhr, nt) == nonterminal_category.(T, (1, 2))
 
 
 
@@ -144,14 +139,12 @@ rules = Set{Rule{T,NT}}([
 grammar = Grammar(rules, toTerminal, fromTerminal)
 
 
-import ProfileVega
-
 terminalss = [[rand(terminals)] for _ in 1:100]
 @time chart = chartparse(grammar, CountScoring(), terminalss)
 chart[1,100][initial_category(grammar)]
 scoring = AbstractGrammars.WDS(grammar)
 @time chart = chartparse(grammar, scoring, terminalss)
-chart[1,40][initial_category(grammar)]
+sample_derivations(scoring, chart[1,100][initial_category(grammar)], 1)
 s
 scoring.store
 eltype(scoring.store) |> isbitstype

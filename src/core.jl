@@ -17,6 +17,12 @@ function isplain(T::Type)
   return true
 end
 
+# check for the tag of an object
+⊣(tag, x) = x.tag == tag
+
+default(::Type{T}) where T <: Number = zero(T)
+default(::Type{Symbol}) = Symbol()
+
 #########################
 ### Grammar Interface ###
 #########################
@@ -204,96 +210,7 @@ mul_scores(::BooleanScoring, left, right) = left && right
 
 # Implementation idea: break rec. structure with indices into a vector (store).
 # Ihe store contains unboxed values, which reduces GC times.
-# Additionally, it allows to update probabilities without parsing again.
-struct Zero{S,T} end
-struct One{S,T} end
-struct Value{S,T} score::S; value::T end
-struct Add{S,T}
-  selfindex :: Int
-  score     :: S
-  left      :: Union{Int, One{S,T}, Value{S,T}}
-  right     :: Union{Int, One{S,T}, Value{S,T}}
-end
-struct Mul{S,T}
-  selfindex :: Int
-  score     :: S
-  left      :: Union{Int, Value{S,T}}
-  right     :: Union{Int, Value{S,T}}
-end
-# Free Score
-const FS{S,T} = Union{Zero{S,T}, One{S,T}, Value{S,T}, Add{S,T}, Mul{S,T}}
-
-S, T = LogProb, Int
-isplain(FS{S,T})
-
-import Base: zero, iszero, one, isone
-zero(::Type{<:FS{S,T}}) where {S,T} = Zero{S,T}()
-iszero(::Zero) = true
-iszero(::FS) = false
-one(::Type{<:FS{S,T}}) where {S,T} = Zero{S,T}()
-isone(::One) = true
-isone(::FS) = false
-
-score(::Zero{S,T}) where {S,T}   = zero(S)
-score(::One{S,T})  where {S,T}   = one(S)
-score(x::Union{Value, Add, Mul}) = x.score
-
-as_argument(x::Union{One, Value}) = x
-as_argument(x::Union{Add, Mul}) = x.selfindex
-
-# Tree Distribution Scoring (each value is a distribution over derivations)
-struct TDS{C,R} <: Scoring
-  store :: Vector{FS{LogProb, App{C,R}}}
-end
-function TDS(::AbstractGrammar{R}) where {C, R <: AbstractRule{C}}
-  store = Vector{FS{LogProb, App{C,R}}}()
-  TDS(store)
-end
-
-function score_type(::Type{<:AbstractGrammar{R}}, ::Type{TDS{C,R}}) where 
-  {C, R <: AbstractRule{C}}
-  FS{LogProb, App{C,R}}
-end
-function ruleapp_score(::TDS, grammar::AbstractGrammar{R}, lhs, rule) where
-  {C, R <: AbstractRule{C}}
-  Value(LogProb(logpdf(grammar, lhs, rule), islog=true), App{C,R}(lhs, rule))
-end
-
-# normal addition
-function add_scores(tds::TDS, left::FS{S,T}, right::FS) where {S,T}
-  i = length(tds.store) + 1
-  s = score(left) + score(right)
-  x = Add{S,T}(i, s, as_argument(left), as_argument(right))
-  push!(tds.store, x)
-  return x
-end
-
-# normal multiplication
-function mul_scores(tds::TDS, left::FS{S,T}, right::FS) where {S,T}
-  i = length(tds.store) + 1
-  s = score(left) * score(right)
-  x = Mul{S,T}(i, s, as_argument(left), as_argument(right))
-  push!(tds.store, x)
-  return x
-end
-
-# Zero is neutral element for addition 
-add_scores(::TDS, left::Zero, right::FS) = right
-add_scores(::TDS, left::FS, right::Zero) = left
-add_scores(::TDS, left::Zero, right::Zero) = left
-
-# One is neutral element for multiplication
-mul_scores(::TDS, left::One, right::FS) = right
-mul_scores(::TDS, left::FS, right::One) = left
-mul_scores(::TDS, left::One, right::One) = left
-
-# Zero absorbs anything in multiplication
-mul_scores(::TDS, left::Zero, right::FS) = left
-mul_scores(::TDS, left::FS, right::Zero) = right
-mul_scores(::TDS, left::Zero, right::Zero) = left
-mul_scores(::TDS, left::One, right::Zero) = right
-mul_scores(::TDS, left::Zero, right::One) = left
-
+# Additionally, it allows to update probabilities without parsing again (not yet implemented).
 
 @enum ScoreTag ADD MUL VAL ZERO
 
@@ -340,6 +257,7 @@ struct ScoredFreeEntry{S,T}
   end
 end
 
+import Base: zero, iszero
 zero(::Type{ScoredFreeEntry{S,T}}) where {S,T} = ScoredFreeEntry(S, T)
 iszero(x::ScoredFreeEntry) = x.tag == ZERO
 
@@ -372,6 +290,28 @@ function mul_scores(s::WDS, x, y)
   ZERO == x.tag && return x
   ZERO == y.tag && return y
   return ScoredFreeEntry(s.store, *, x, y)
+end
+
+function sample_derivations(s::WDS{S,T}, x::ScoredFreeEntry{S,T}, n::Int) where {S,T}
+  vals = Vector{T}()
+  for _ in 1:n
+    sample_derivation!(vals, s, x)
+  end
+  vals
+end
+
+function sample_derivation!(vals, s::WDS, x::ScoredFreeEntry{S,T}) where {S,T}
+  if VAL  ⊣ x 
+    push!(vals, x.value)
+  elseif ADD ⊣ x
+    index = rand(S) < s.store[x.leftIndex].score / x.score ? x.leftIndex : x.rightIndex
+    sample_derivation!(vals, s, s.store[index])
+  elseif MUL ⊣ x
+    sample_derivation!(vals, s, s.store[x.leftIndex])
+    sample_derivation!(vals, s, s.store[x.rightIndex])
+  else # ZERO ⊣ x
+    error("cannot sample from zero")
+  end
 end
 
 ########################################################
