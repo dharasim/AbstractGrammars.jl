@@ -295,64 +295,84 @@ mul_scores(::TDS, left::One, right::Zero) = right
 mul_scores(::TDS, left::Zero, right::One) = left
 
 
+@enum ScoreTag ADD MUL VAL ZERO
 
-# struct ScoredFreeEntry{S,T}
-#   tag        :: ScoreTag
-#   score      :: S
-#   value      :: T
-#   index      :: Int
-#   leftIndex  :: Int
-#   rightIndex :: Int
+struct ScoredFreeEntry{S,T}
+  tag        :: ScoreTag
+  score      :: S
+  value      :: T
+  index      :: Int
+  leftIndex  :: Int
+  rightIndex :: Int
 
-#   function ScoredFreeEntry(
-#     store :: Vector{ScoredFreeEntry{S,T}},
-#     op    :: Union{typeof(+), typeof(*)},
-#     left  :: ScoredFreeEntry{S,T}, 
-#     right :: ScoredFreeEntry{S,T}
-#   ) where {S,T}
-#     tag(::typeof(+)) = ADD
-#     tag(::typeof(*)) = MUL
-#     score = op(left.score, right.score)
-#     value = left.value # dummy value
-#     index = length(store) + 1
-#     x = new{S,T}(tag(op), score, value, index, left.index, right.index)
-#     push!(store, x)
-#     index
-#   end
+  # addition and multiplication
+  function ScoredFreeEntry(
+    store :: Vector{ScoredFreeEntry{S,T}},
+    op    :: Union{typeof(+), typeof(*)},
+    left  :: ScoredFreeEntry{S,T}, 
+    right :: ScoredFreeEntry{S,T}
+  ) where {S,T}
+    tag(::typeof(+)) = ADD
+    tag(::typeof(*)) = MUL
+    score = op(left.score, right.score)
+    value = left.value # dummy value
+    index = length(store) + 1
+    x = new{S,T}(tag(op), score, value, index, left.index, right.index)
+    push!(store, x)
+    return x
+  end
 
-#   function ScoredFreeEntry(
-#     store :: Vector{ScoredFreeEntry{S,T}},
-#     score :: S,
-#     value :: T
-#   ) where {S,T}
-#     index = length(store) + 1
-#     x = new{S,T}(VAL, score, value, index, -1, -1)
-#     push!(store, x)
-#     index
-#   end
-# end
+  # scored values
+  function ScoredFreeEntry(
+    store :: Vector{ScoredFreeEntry{S,T}},
+    score :: S,
+    value :: T
+  ) where {S,T}
+    index = length(store) + 1
+    x = new{S,T}(VAL, score, value, index)
+    push!(store, x)
+    return x
+  end
 
-# # Weighted Derivation Scoring (WDS)
-# struct WDS{S,T} <: Scoring
-#   store :: Vector{ScoredFreeEntry{S,T}}
-# end
+  # constant zero
+  function ScoredFreeEntry(::Type{S}, ::Type{T}) where {S,T}
+    new{S,T}(ZERO, zero(S))
+  end
+end
 
-# function WDS(::G) where
-#   {C, R <: AbstractRule{C}, G <: AbstractGrammar{R}}
-#   WDS(ScoredFreeEntry{LogProb, Tuple{C, R}}[])
-# end
+zero(::Type{ScoredFreeEntry{S,T}}) where {S,T} = ScoredFreeEntry(S, T)
+iszero(x::ScoredFreeEntry) = x.tag == ZERO
 
-# score_type(::Type{<:AbstractGrammar}, ::Type{<:WDS}) = Int
-# ruleapp_score(s::WDS, grammar, lhs, rule) = 
-#   ScoredFreeEntry(
-#     s.store, 
-#     LogProb(logpdf(grammar,lhs,rule), islog=true), 
-#     (lhs, rule)
-#   )
-# add_scores(s::WDS, i, j) = 
-#   ScoredFreeEntry(s.store, +, s.store[i], s.store[j])
-# mul_scores(s::WDS, i, j) = 
-#   ScoredFreeEntry(s.store, *, s.store[i], s.store[j])
+# Weighted Derivation Scoring (WDS)
+struct WDS{S,T} <: Scoring
+  store :: Vector{ScoredFreeEntry{S,T}}
+end
+
+function WDS(::G) where
+  {C, R <: AbstractRule{C}, G <: AbstractGrammar{R}}
+  WDS(ScoredFreeEntry{LogProb, App{C, R}}[])
+end
+
+score_type(::Type{<:AbstractGrammar}, ::Type{<:WDS{S,T}}) where {S, T} =
+  ScoredFreeEntry{S, T}
+ruleapp_score(s::WDS, grammar, lhs, rule) = 
+  ScoredFreeEntry(
+    s.store, 
+    LogProb(logpdf(grammar,lhs,rule), islog=true), 
+    App(lhs, rule)
+  )
+
+function add_scores(s::WDS, x, y)
+  ZERO == x.tag && return y
+  ZERO == y.tag && return x
+  return ScoredFreeEntry(s.store, +, x, y)
+end
+
+function mul_scores(s::WDS, x, y)
+  ZERO == x.tag && return x
+  ZERO == y.tag && return y
+  return ScoredFreeEntry(s.store, *, x, y)
+end
 
 ########################################################
 ### Free-semiring scorings with re-computable scores ###

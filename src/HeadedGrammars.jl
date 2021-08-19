@@ -4,29 +4,47 @@ using AbstractGrammars
 import AbstractGrammars: apply, initial_category, push_completions!
 using Test
 
-# const tests = []
+# check for the tag of an object
+⊣(tag, x) = x.tag == tag
 
-struct Start{T,NT}                 end
-struct Terminal{T,NT}    label::T  end
-struct NonTerminal{T,NT} label::NT end
-const Category{T,NT} = Union{Start{T,NT}, Terminal{T,NT}, NonTerminal{T,NT}}
+default(::Type{T}) where T <: Number = zero(T)
+default(::Type{Symbol}) = Symbol()
+# default(::Type{T}) where T <: AbstractString = one(T)
+# default(::Type{T}) where T <: AbstractVector = T()
 
-abstract type URule{T,NT} <: AbstractRule{Category{T,NT}} end
-struct Termination{T,NT}  <: URule{T,NT} end
-struct StartRule{T,NT}    <: URule{T,NT} category::NonTerminal{T,NT} end
+@enum CategoryTag start terminal nonterminal
 
-abstract type BRule{T,NT} <: AbstractRule{Category{T,NT}} end
-struct LeftHeaded{T,NT}   <: BRule{T,NT} dependent::NonTerminal{T,NT} end
-struct RightHeaded{T,NT}  <: BRule{T,NT} dependent::NonTerminal{T,NT} end
-struct Duplication{T,NT}  <: BRule{T,NT} end
+struct Category{T,NT}
+  tag     :: CategoryTag
+  tlabel  :: T
+  ntlabel :: NT
+end
 
-const Rule{T,NT} = Union{
-  Termination{T,NT}, StartRule{T,NT}, 
-  LeftHeaded{T,NT}, RightHeaded{T,NT}, Duplication{T,NT}}
+start_category(T, NT) = Category(start, default(T), default(NT))
+terminal_category(NT, t) = Category(terminal, t, default(NT))
+nonterminal_category(T, nt) = Category(nonterminal, default(T), nt)
 
+default(::Type{Category{T,NT}}) where {T,NT} = start_category(T, NT)
+
+
+
+@enum RuleTag startrule terminate duplicate leftheaded rightheaded 
+
+struct Rule{T,NT} <: AbstractRule{Category{T,NT}}
+  tag      :: RuleTag
+  category :: Category{T,NT}
+end
+
+start_rule(c) = Rule(startrule, c)
+termination_rule(T, NT) = Rule(terminate, default(Category{T, NT}))
+duplication_rule(T, NT) = Rule(duplicate, default(Category{T, NT}))
+leftheaded_rule(c) = Rule(leftheaded, c)
+rightheaded_rule(c) = Rule(rightheaded, c)
+
+# tests
 T, NT = Float64, Int
-@test isplain(Category{T,NT})
-@test isplain(Rule{T,NT})
+@test isbitstype(Category{T,NT})
+@test isbitstype(Rule{T,NT})
 
 struct Grammar{T,NT,TT,FT} <: AbstractGrammar{Rule{T,NT}}
   rules        :: Set{Rule{T,NT}}
@@ -34,79 +52,73 @@ struct Grammar{T,NT,TT,FT} <: AbstractGrammar{Rule{T,NT}}
   fromTerminal :: FT # function Terminal{T,NT} -> Vector{NonTerminal{T,NT}}
 end
 
-# by default a rule is not applicable
-apply(::Rule, ::Category) = nothing
-apply(r::LeftHeaded, c::NonTerminal) =
-  c == r.dependent ? nothing : (c, r.dependent)
-apply(r::RightHeaded, c::NonTerminal) = 
-  c == r.dependent ? nothing : (r.dependent, c)
-apply(::Duplication, c::NonTerminal) = (c, c)
-apply(r::StartRule, ::Start) = (r.category,)
-apply(g::Grammar, ::Termination, c::NonTerminal) = (g.toTerminal(c),)
-
-initial_category(::Grammar{T,NT,TT,FT}) where {T,NT,TT,FT} = Start{T,NT}()
-duplication(::Grammar{T,NT,TT,FT}) where {T,NT,TT,FT} = Duplication{T,NT}()
-termination(::Grammar{T,NT,TT,FT}) where {T,NT,TT,FT} = Termination{T,NT}()
-
-function push_completions!(grammar::Grammar, stack, c::Terminal)
-  for lhs in grammar.fromTerminal(c)
-    push!(stack, App(grammar, lhs, termination(grammar)))
-  end
+function apply(grammar::Grammar, r::Rule, c::Category)
+  duplicate   == r.tag                    && return (c, c)
+  leftheaded  == r.tag && c != r.category && return (c, r.category)
+  rightheaded == r.tag && c != r.category && return (r.category, c)
+  start_rule  == r.tag && start == c.tag  && return (r.category,)
+  terminate   == r.tag                    && return (grammar.toTerminal(c),)
+  return nothing
 end
 
-function push_completions!(grammar::Grammar, stack, c::NonTerminal)
-  if StartRule(c) in grammar.rules
-    push!(stack, App(grammar, initial_category(grammar), StartRule(c)))
-  end
-end
-
-function push_completions!(
-  grammar::Grammar, stack, c1::NonTerminal, c2::NonTerminal
-)
-  if c1 == c2
-    if duplication(grammar) in grammar.rules
-      push!(stack, App(grammar, c1, duplication(grammar)))
+initial_category(::Grammar{T,NT,TT,FT}) where {T,NT,TT,FT} = 
+  start_category(T, NT)
+duplication_rule(::Grammar{T,NT,TT,FT}) where {T,NT,TT,FT} = 
+  duplication_rule(T, NT)
+termination_rule(::Grammar{T,NT,TT,FT}) where {T,NT,TT,FT} =
+  termination_rule(T, NT)
+ 
+function push_completions!(grammar::Grammar, stack, c)
+  if terminal ⊣ c
+    for lhs in grammar.fromTerminal(c)
+      push!(stack, App(grammar, lhs, termination_rule(grammar)))
     end
-  else
-    if LeftHeaded(c2) in grammar.rules
-      push!(stack, App(grammar, c1, LeftHeaded(c2)))
-    end
-    if RightHeaded(c1) in grammar.rules
-      push!(stack, App(grammar, c2, RightHeaded(c1)))
-    end
+  elseif nonterminal ⊣ c && start_rule(c) in grammar.rules
+    push!(stack, App(grammar, initial_category(grammar), start_rule(c)))
   end
 end
 
 function push_completions!(grammar::Grammar, stack, c1, c2)
-  nothing
+  nonterminal ⊣ c1 && nonterminal ⊣ c2 || return nothing
+  if c1 == c2
+    r = duplication_rule(grammar)
+    if r in grammar.rules
+      push!(stack, App(grammar, c1, r))
+    end
+  else
+    r = leftheaded_rule(c2)
+    if r in grammar.rules
+      push!(stack, App(grammar, c1, r))
+    end
+    r = rightheaded_rule(c1)
+    if r in grammar.rules
+      push!(stack, App(grammar, c2, r))
+    end
+  end
 end
 
-begin
-  T, NT = String, Symbol
-  nt = NonTerminal{T,NT}(:bar)
-  LeftHeaded(nt)
-  lhr = LeftHeaded{T,NT}(NonTerminal{T,NT}(:foo))
-  @test apply(lhr, nt) == map(NonTerminal{T,NT}, (:bar, :foo))
-end
-
-
-
+# tests
+T, NT = String, Symbol
+nt = nonterminal_category(T, :bar)
+lhr = leftheaded_rule(nonterminal_category(T, :foo))
+grammar = Grammar(Set([lhr]), nothing, nothing)
+@test apply(grammar, lhr, nt) == nonterminal_category.(T, (:bar, :foo))
 
 
 
 T, NT = Int, Int
-nonterminals = map(NonTerminal{T, NT}, 1:4)
-terminals = map(Terminal{T, NT}, 1:3)
+nonterminals = nonterminal_category.(T, 1:4)
+terminals = terminal_category.(NT, 1:3)
 termination_dict = Dict(1 => 1, 2 => 2, 3 => 3, 4 => 3)
-toTerminal(c) = Terminal{T,NT}(termination_dict[c.label])
+toTerminal(c) = terminal_category(NT, termination_dict[c.ntlabel])
 inv_termination_dict = Dict(1 => [1], 2 => [2], 3 => [3, 4])
-fromTerminal(c) = map(NonTerminal{T, NT}, inv_termination_dict[c.label])
+fromTerminal(c) = nonterminal_category.(T, inv_termination_dict[c.tlabel])
 rules = Set{Rule{T,NT}}([
-  StartRule(first(nonterminals));
-  Termination{T,NT}();
-  Duplication{T,NT}(); 
-  map(LeftHeaded, nonterminals); 
-  map(RightHeaded, nonterminals)])
+  start_rule(first(nonterminals));
+  termination_rule(T, NT);
+  duplication_rule(T, NT); 
+  leftheaded_rule.(nonterminals); 
+  rightheaded_rule.(nonterminals)])
 grammar = Grammar(rules, toTerminal, fromTerminal)
 
 import Distributions: logpdf
@@ -119,29 +131,30 @@ chart[1,70][initial_category(grammar)]
 
 
 T, NT = Float64, Int
-nonterminals = map(NonTerminal{T, NT}, 1:100)
-terminals = map(Terminal{T, NT}, 1:100)
-toTerminal(c) = Terminal{T,NT}(float(c.label))
-fromTerminal(c) = [NonTerminal{T, NT}(Int(c.label))]
+nonterminals = nonterminal_category.(T, 1:100)
+terminals = terminal_category.(NT, 1:100)
+toTerminal(c) = terminal_category(NT, float(c.ntlabel))
+fromTerminal(c) = [nonterminal_category(T, Int(c.tlabel))]
 rules = Set{Rule{T,NT}}([
-  StartRule(first(nonterminals));
-  Termination{T,NT}();
-  Duplication{T,NT}(); 
-  map(LeftHeaded, nonterminals); 
-  map(RightHeaded, nonterminals)])
+  start_rule.(nonterminals);
+  termination_rule(T, NT);
+  duplication_rule(T, NT); 
+  # leftheaded_rule.(nonterminals); 
+  rightheaded_rule.(nonterminals)])
 grammar = Grammar(rules, toTerminal, fromTerminal)
 
 
 import ProfileVega
 
-terminalss = [[rand(terminals)] for _ in 1:40]
+terminalss = [[rand(terminals)] for _ in 1:100]
 @time chart = chartparse(grammar, CountScoring(), terminalss)
-chart[1,50][initial_category(grammar)]
-scoring = AbstractGrammars.TDS(grammar)
-@ProfileVega.profview chart = chartparse(grammar, scoring, terminalss)
-idx = chart[1,50][initial_category(grammar)]
+chart[1,100][initial_category(grammar)]
+scoring = AbstractGrammars.WDS(grammar)
+@time chart = chartparse(grammar, scoring, terminalss)
+chart[1,40][initial_category(grammar)]
+s
 scoring.store
-eltype(scoring.store) |> isplain
+eltype(scoring.store) |> isbitstype
 
 @time chart = chartparse(grammar, AbstractGrammars.TreeDistScoring(), terminalss)
 
