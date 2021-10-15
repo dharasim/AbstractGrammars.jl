@@ -5,9 +5,12 @@ version = "0.1.0"
 
 [deps]
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 LogProbs = "0810563c-c8a8-53be-b185-e51c33dc41ea"
 MacroTools = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
-ProfileVega = "4391764f-db79-4bd7-a4c6-f9062de4300e"
+Pitches = "71ce3a53-bc01-4ee9-b4af-5ce581ee5149"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+Underscores = "d9a01c3f-67ce-4d8c-9b55-35f6e4050bb1"

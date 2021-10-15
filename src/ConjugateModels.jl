@@ -156,7 +156,28 @@ end
 
 end # module
 
+#################################################
+### Pyro-style models using multiple dispatch ###
+#################################################
 
+# module PyroModels
+
+# using Distributions
+# using AbstractGrammars.ConjugateModels: DirCat
+
+# abstract type ConjugateModel end
+
+# struct Mixture{T} <: ConjugateModel
+#   component :: DirCat{Int}
+#   value     :: Vector{DirCat{T}}
+# end
+
+# function prob_prog(⊙, m::Mixture)
+#   k = @sample(⊙, m.component)
+#   @sample(⊙, m.value[k])
+# end
+
+# end # module
 
 ##########################################################################
 ### OLD CODE: Dirichlet categorical distributions on positive integers ###

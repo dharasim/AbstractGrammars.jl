@@ -20,6 +20,7 @@ include("core.jl")
 # include submodules
 include("ConjugateModels.jl")
 include("BinaryCountGrammar.jl")
-# include("HeadedGrammars.jl")
+include("HeadedGrammars.jl")
+include("HeadedSimple.jl")
 
 end # module

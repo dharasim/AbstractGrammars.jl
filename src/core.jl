@@ -49,7 +49,7 @@ struct App{C, R <: AbstractRule{C}}
   rule :: R
 end
 
-function App(grammar::AbstractGrammar{R}, lhs, rule) where 
+function App(::AbstractGrammar{R}, lhs, rule) where 
   {C, R <: AbstractRule{C}}
   App{C, R}(lhs, rule)
 end
@@ -195,7 +195,7 @@ score_type(::Type{<:AbstractGrammar}, ::Type{<:WDS{S,T}}) where {S, T} =
 ruleapp_score(s::WDS, grammar, lhs, rule) = 
   ScoredFreeEntry(
     s.store, 
-    LogProb(logpdf(grammar,lhs,rule), islog=true), 
+    LogProb(logpdf(grammar, lhs, rule), islog=true), 
     App(lhs, rule)
   )
 
