@@ -6,7 +6,7 @@ module AbstractGrammars
 
 export 
 # utils
-normalize, ⊣, default,
+Tag, ⊣, @tag_str, normalize, default,
 
 # Rule and grammar interface
 AbstractRule, AbstractGrammar, App, apply, push_completions!,
@@ -29,6 +29,7 @@ import Distributions: logpdf
 import Base: zero, iszero, insert!, map
 
 using LogProbs
+using ShortStrings: ShortString31
 
 #############
 ### Utils ###
@@ -37,6 +38,13 @@ using LogProbs
 # check for the tag of an object
 ⊣(tag, x) = x.tag == tag
 ⊣(tag, xs::Tuple) = all(x -> x.tag == tag, xs)
+
+# construct tags as short strings
+macro tag_str(str)
+  ShortString31(str)
+end
+
+const Tag = ShortString31
 
 # default values for some types
 default(::Type{T}) where T <: Number = zero(T)
@@ -56,9 +64,10 @@ include("scorings.jl")
 include("trees.jl")
 
 # include submodules
-include("ConjugateModels.jl")
-include("Headed.jl")
-include("HeadedSimple.jl")
 include("AtMosts.jl")
+include("ConjugateModels.jl")
+include("GeneralCategories.jl")
+include("Headed.jl")
+include("HeadedTyped.jl")
 
 end # module

@@ -1,5 +1,5 @@
-exit()
 using AbstractGrammars
+using AbstractGrammars.GeneralCategories
 
 # imports for overloading
 import AbstractGrammars: default
@@ -11,7 +11,7 @@ using Pitches: parsespelledpitch, Pitch, SpelledIC, MidiIC, midipc, alteration, 
 using Underscores: @_
 
 # named imports
-import AbstractGrammars.HeadedSimple as H
+import AbstractGrammars.Headed
 import HTTP, JSON
 
 #############
@@ -83,17 +83,17 @@ arity(r::CFRule) = length(r.rhs)
 # @assert [CFRule('a', 'b', 'c'), CFRule('d', 'e')] |> eltype |> isbitstype
 
 function derivation(tree::Tree{T}) where T
-  rules = [CFRule(H.start_cat(T), H.nonterminal_cat(tree.label))]
+  rules = [CFRule(start_category(T), nonterminal_category(tree.label))]
 
   push_rules(tree::Leaf) = begin 
-    r = CFRule(H.nonterminal_cat(tree.label), H.terminal_cat(tree.label))
+    r = CFRule(nonterminal_category(tree.label), terminal_category(tree.label))
     push!(rules, r)
   end
   push_rules(tree::Binary) = begin
     r = CFRule(
-      H.nonterminal_cat(tree.label), 
-      H.nonterminal_cat(tree.left.label), 
-      H.nonterminal_cat(tree.right.label))
+      nonterminal_category(tree.label), 
+      nonterminal_category(tree.left.label), 
+      nonterminal_category(tree.right.label))
     push!(rules, r)
     push_rules(tree.left)
     push_rules(tree.right)
@@ -130,18 +130,18 @@ function derivation2tree(grammar, derivation::Vector{App{C, R}}) where {C, R}
   end
 end
 
-function cfrule_to_headedrule_app(r::CFRule{H.Category{T}}) where T
-    if arity(r) == 1 && H.start ⊣ r.lhs && H.nonterminal ⊣ r.rhs[1]
-      return App(r.lhs, H.start_rule(r.rhs[1]))
-    elseif arity(r) == 1 && H.nonterminal ⊣ r.lhs && H.terminal ⊣ r.rhs[1]
-      return App(r.lhs, H.termination_rule(T))
-    elseif arity(r) == 2 && H.nonterminal ⊣ (r.lhs, r.rhs...)
+function cfrule_to_headedrule_app(r::CFRule{Headed.Category{T}}) where T
+    if arity(r) == 1 && "start" ⊣ r.lhs && "nonterminal" ⊣ r.rhs[1]
+      return App(r.lhs, Headed.start_rule(r.rhs[1]))
+    elseif arity(r) == 1 && "nonterminal" ⊣ r.lhs && "terminal" ⊣ r.rhs[1]
+      return App(r.lhs, Headed.termination_rule(T))
+    elseif arity(r) == 2 && "nonterminal" ⊣ (r.lhs, r.rhs...)
       if r.lhs == r.rhs[1] == r.rhs[2]
-        return App(r.lhs, H.duplication_rule(T))
+        return App(r.lhs, Headed.duplication_rule(T))
       elseif r.lhs == r.rhs[1] && r.rhs[1] != r.rhs[2]
-        return App(r.lhs, H.leftheaded_rule(r.rhs[2]))
+        return App(r.lhs, Headed.leftheaded_rule(r.rhs[2]))
       elseif r.lhs == r.rhs[2] && r.rhs[1] != r.rhs[2]
-        return App(r.lhs, H.rightheaded_rule(r.rhs[1]))
+        return App(r.lhs, Headed.rightheaded_rule(r.rhs[1]))
       end
     end
     error("$r could not be converted into a headed rule")
@@ -175,16 +175,16 @@ all_chords = collect(
   for acc in ("b", "#", "")
   for form in instances(ChordForm))
 
-startsym = H.start_cat(TPCC)
-ts       = H.terminal_cat.(all_chords)
-nts      = H.nonterminal_cat.(all_chords)
+startsym = start_category(TPCC)
+ts       = terminal_category.(all_chords)
+nts      = nonterminal_category.(all_chords)
 
-start_rules = Set(H.start_rule.(nts))
+start_rules = Set(Headed.start_rule.(nts))
 nonstart_rules = Set([
-  H.termination_rule(TPCC);
-  H.duplication_rule(TPCC);
-  H.leftheaded_rule.(nts);
-  H.rightheaded_rule.(nts)])
+  Headed.termination_rule(TPCC);
+  Headed.duplication_rule(TPCC);
+  Headed.leftheaded_rule.(nts);
+  Headed.rightheaded_rule.(nts)])
 
 rules = union(start_rules, nonstart_rules)
 
@@ -194,10 +194,10 @@ params = (
   start_dist = flat_dircat(start_rules),
   nonstart_dists = Dict(nt => flat_dircat(nonstart_rules) for nt in nts))
 
-function logpdf(g::H.Grammar, lhs, rule)
-  if H.start ⊣ lhs && H.startrule ⊣ rule
+function logpdf(g::Headed.Grammar, lhs, rule)
+  if "start" ⊣ lhs && "start" ⊣ rule
     logpdf(g.params.start_dist, rule)
-  elseif H.nonterminal ⊣ lhs && !(H.startrule ⊣ rule)
+  elseif "nonterminal" ⊣ lhs && !("startrule" ⊣ rule)
     logpdf(g.params.nonstart_dists[lhs], rule)
   else
     log(0)
@@ -208,7 +208,7 @@ end
 function observe_tree!(params, tree)
   apps = cfrule_to_headedrule_app.(derivation(tree))
   for app in apps
-    if H.startrule ⊣ app.rule
+    if "start" ⊣ app.rule
       add_obs!(params.start_dist, app.rule, 1)
     else
       add_obs!(params.nonstart_dists[app.lhs], app.rule, 1)
@@ -217,7 +217,7 @@ function observe_tree!(params, tree)
 end
 
 foreach(tune -> observe_tree!(params, tune.tree), treebank)
-grammar = H.Grammar(rules, params)
+grammar = Headed.Grammar(rules, params)
 
 ############################
 ### Test with dummy data ###
@@ -225,7 +225,7 @@ grammar = H.Grammar(rules, params)
 
 # terminalss = collect([H.terminal_cat(c)]
 #   for c in [Chord(p"C", MAJ7), Chord(p"G", DOM), Chord(p"C", MAJ7)])
-terminalss = fill([H.terminal_cat(Chord(p"C", MAJ7))], 50)
+terminalss = fill([terminal_category(Chord(p"C", MAJ7))], 50)
 scoring = WDS(grammar) # weighted derivation scoring
 @time chart = chartparse(grammar, scoring, terminalss)
 @time sample_derivations(scoring, chart[1,length(terminalss)][startsym], 1) .|> 
@@ -241,10 +241,13 @@ accs = zeros(length(treebank))
 @time for i in eachindex(treebank)
   print(i, ' ', treebank[i].title, ' ')
   tree = treebank[i].tree
-  terminalss = [[H.terminal_cat(c)] for c in leaflabels(tree)]
+  terminalss = [[terminal_category(c)] for c in leaflabels(tree)]
   chart = chartparse(grammar, scoring, terminalss)
   apps = chart[1, length(terminalss)][startsym].apps
   accs[i] = tree_similarity(tree, derivation2tree(grammar, apps))
   println(accs[i])
 end
 sum(accs) / length(accs)
+
+################################################################################
+
