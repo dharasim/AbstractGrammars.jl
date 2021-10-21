@@ -3,7 +3,7 @@ module Headed
 using Test # for development
 
 using ..AbstractGrammars
-import ..AbstractGrammars: apply, initial_category, push_completions!, default
+import ..AbstractGrammars: apply, push_completions!, default
 import Distributions: logpdf
 
 ##################
@@ -72,10 +72,10 @@ termination_rule(::Grammar{T,NT,TT,FT}) where {T,NT,TT,FT} =
 function push_completions!(grammar::Grammar, stack, c)
   if terminal ⊣ c
     for lhs in grammar.fromTerminal(c)
-      push!(stack, App(grammar, lhs, termination_rule(grammar)))
+      push!(stack, App(lhs, termination_rule(grammar)))
     end
   elseif nonterminal ⊣ c && start_rule(c) in grammar.rules
-    push!(stack, App(grammar, initial_category(grammar), start_rule(c)))
+    push!(stack, App(initial_category(grammar), start_rule(c)))
   end
 end
 
@@ -84,16 +84,16 @@ function push_completions!(grammar::Grammar, stack, c1, c2)
   if c1 == c2
     r = duplication_rule(grammar)
     if r in grammar.rules
-      push!(stack, App(grammar, c1, r))
+      push!(stack, App(c1, r))
     end
   else
     r = leftheaded_rule(c2)
     if r in grammar.rules
-      push!(stack, App(grammar, c1, r))
+      push!(stack, App(c1, r))
     end
     r = rightheaded_rule(c1)
     if r in grammar.rules
-      push!(stack, App(grammar, c2, r))
+      push!(stack, App(c2, r))
     end
   end
 end

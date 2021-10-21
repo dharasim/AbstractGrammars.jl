@@ -43,7 +43,8 @@ end
 ### Test binary-tree counts ###
 ###############################
 
-import AbstractGrammars.BinaryCountGrammar
+include("BinaryCountGrammar.jl")
+using .BinaryCountGrammar: test_binary_count_grammar
 @testset "count all binary trees" begin
-  BinaryCountGrammar.test_binary_count_grammar()
+  test_binary_count_grammar()
 end
