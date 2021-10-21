@@ -1,7 +1,7 @@
 module HeadedSimple
 
 using ..AbstractGrammars
-import ..AbstractGrammars: apply, initial_category, push_completions!, default
+import ..AbstractGrammars: apply, push_completions!, default
 import Distributions: logpdf
 
 ##################
@@ -18,12 +18,12 @@ end
 
 default(::Type{Category{V}}) where V = Category(default(CategoryTag), default(V))
 
-start_category(V) = Category(start, default(V))
-terminal_category(val) = Category(terminal, val)
-nonterminal_category(val) = Category(nonterminal, val)
+start_cat(V) = Category(start, default(V))
+terminal_cat(val) = Category(terminal, val)
+nonterminal_cat(val) = Category(nonterminal, val)
 
-terminal_category(c::Category) = Category(terminal, c.val)
-nonterminal_category(c::Category) = Category(nonterminal, c.val)
+terminal_cat(c::Category) = Category(terminal, c.val)
+nonterminal_cat(c::Category) = Category(nonterminal, c.val)
 
 #############
 ### Rules ###
@@ -49,8 +49,8 @@ function apply(r::Rule, c::Category)
   duplicate   ⊣ r               && return (c, c)
   leftheaded  ⊣ r && c != r.cat && return (c, r.cat)
   rightheaded ⊣ r && c != r.cat && return (r.cat, c)
-  start_rule  ⊣ r && start ⊣ c  && return (r.cat,)
-  terminate   ⊣ r               && return (terminal_category(c),)
+  startrule  ⊣ r && start ⊣ c  && return (r.cat,)
+  terminate   ⊣ r               && return (terminal_cat(c),)
   return nothing
 end
 
@@ -68,9 +68,9 @@ function push_completions!(
   ) where {V,P}
 
   if terminal ⊣ c
-    push!(stack, App(nonterminal_category(c), termination_rule(V)))
+    push!(stack, App(nonterminal_cat(c), termination_rule(V)))
   elseif nonterminal ⊣ c && start_rule(c) in grammar.rules
-    push!(stack, App(start_category(V), start_rule(c)))
+    push!(stack, App(start_cat(V), start_rule(c)))
   end
 end
 
@@ -101,8 +101,8 @@ end
 #############
 
 # V = Int
-# ts = terminal_category.(1:4)
-# nts = nonterminal_category.(1:4)
+# ts = terminal_cat.(1:4)
+# nts = nonterminal_cat.(1:4)
 # rules = Set([
 #   start_rule(nts[1]);
 #   termination_rule(V);

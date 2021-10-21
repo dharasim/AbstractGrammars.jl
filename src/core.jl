@@ -1,6 +1,8 @@
 using LogProbs
 using Distributions: logpdf
 
+import Base: zero, iszero
+
 #############
 ### Utils ###
 #############
@@ -19,6 +21,7 @@ end
 
 # check for the tag of an object
 ⊣(tag, x) = x.tag == tag
+⊣(tag, xs::Tuple) = all(x -> x.tag == tag, xs)
 
 default(::Type{T}) where T <: Number = zero(T)
 default(::Type{Symbol}) = Symbol()
@@ -119,9 +122,43 @@ mul_scores(::CountScoring, left, right) = left * right
 
 struct BooleanScoring <: Scoring end
 score_type(::Type{<:AbstractGrammar}, ::Type{BooleanScoring}) = Bool
-ruleapp_score(::AbstractGrammar, ::BooleanScoring, ::Any, ::Any) = true
+ruleapp_score( ::BooleanScoring, ::AbstractGrammar, ::Any, ::Any) = true
 add_scores(::BooleanScoring, left, right) = left || right
 mul_scores(::BooleanScoring, left, right) = left && right
+
+###############################
+### Best derivation scoring ###
+###############################
+
+struct BestDerivation{C, R<:AbstractRule{C}}
+  prob :: LogProb
+  apps :: Vector{App{C, R}}
+end
+
+iszero(bd::BestDerivation) = iszero(bd.prob)
+
+function zero(::Type{BestDerivation{C, R}}) where {C, R}
+  BestDerivation(zero(LogProb), App{C, R}[])
+end
+
+struct BestDerivationScoring <: Scoring end
+
+function score_type(::Type{G}, ::Type{BestDerivationScoring}) where 
+    {C, R <: AbstractRule{C}, G <: AbstractGrammar{R}}
+  BestDerivation{C, R}
+end
+
+function ruleapp_score(::BestDerivationScoring, grammar::AbstractGrammar, lhs, rule)
+  BestDerivation(LogProb(logpdf(grammar, lhs, rule), islog=true), [App(lhs, rule)])
+end
+
+function add_scores(::BestDerivationScoring, left, right)
+  left.prob >= right.prob ? left : right
+end
+
+function mul_scores(::BestDerivationScoring, left, right)
+  BestDerivation(left.prob * right.prob, [left.apps; right.apps])
+end
 
 ######################################################################
 ### Free-semiring scorings with manually managed pointer structure ###
@@ -176,7 +213,7 @@ struct ScoredFreeEntry{S,T}
   end
 end
 
-import Base: zero, iszero
+
 zero(::Type{ScoredFreeEntry{S,T}}) where {S,T} = ScoredFreeEntry(S, T)
 iszero(x::ScoredFreeEntry) = x.tag == ZERO
 
@@ -196,8 +233,7 @@ ruleapp_score(s::WDS, grammar, lhs, rule) =
   ScoredFreeEntry(
     s.store, 
     LogProb(logpdf(grammar, lhs, rule), islog=true), 
-    App(lhs, rule)
-  )
+    App(lhs, rule))
 
 function add_scores(s::WDS, x, y)
   ZERO == x.tag && return y
