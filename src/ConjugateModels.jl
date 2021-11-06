@@ -31,7 +31,7 @@ function add_obs!(model, obs, pscount) end
 struct DirCat{T} <: Distribution{Univariate, Discrete}
   pscounts :: Dict{T, Float64}
 
-  function DirCat(pscounts) where T
+  function DirCat(pscounts)
     @assert(
       !isempty(pscounts) && all(((x, pscount),) -> pscount > 0, pscounts), 
       "DirCat parameter invalid")
