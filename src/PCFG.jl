@@ -183,39 +183,4 @@ end
 
 
 
-### Re-implementation AtMost
 
-using AbstractGrammars
-
-struct Length val::Int end
-
-struct AtMost{T, N}
-  length :: Length
-  vals   :: NTuple{N, T}
-
-  function AtMost(xs::T...; limit::Int) where T
-    k = length(xs)
-    @assert k <= limit
-    new{T, limit}(Length(k), tuple(xs..., ntuple(i -> default(T), limit-k)...))
-  end
-end
-
-AtMost(1, 2, limit=5)
-
-for N in 1:10
-  @eval $(Symbol(:atmost, N))(xs...) = AtMost(xs..., limit=$N)
-end
-
-atmost3(4, 5)
-
-
-atmost4()
-
-
-
-AtMost(1, 2, limit=3)
-
-AtMost{3}
-AtMost{3}(1,2)
-
-AtMost{3}(Length(2), (3,4))
