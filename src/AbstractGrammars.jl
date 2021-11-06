@@ -9,7 +9,7 @@ export
 Tag, ⊣, @tag_str, normalize, default,
 
 # Rule and grammar interface
-AbstractRule, AbstractGrammar, App, apply, push_completions!,
+AbstractRule, AbstractGrammar, App, apply, arity, push_completions!,
 
 # Scorings
 InsideScoring, CountScoring, BooleanScoring, BestDerivationScoring,
@@ -19,14 +19,15 @@ WDS, sample_derivations,
 Chart, chartparse,
 
 # Trees
-Tree, Binary, Leaf, dict2tree, innerlabels, leaflabels, tree_similarity
+Tree, labels, innerlabels, leaflabels, tree_similarity, isleaf, tree2derivation,
+Treelet, treelets
 
 ###############
 ### Imports ###
 ###############
 
 import Distributions: logpdf
-import Base: zero, iszero, insert!, map
+import Base: zero, iszero, insert!, map, eltype
 
 using LogProbs
 using ShortStrings: ShortString31
@@ -49,6 +50,7 @@ const Tag = ShortString31
 # default values for some types
 default(::Type{T}) where T <: Number = zero(T)
 default(::Type{Symbol}) = Symbol()
+default(::Type{Char}) = ' '
 
 # generic normalization function
 normalize(xs) = xs ./ sum(xs)
@@ -65,6 +67,7 @@ include("trees.jl")
 
 # include submodules
 include("AtMosts.jl")
+include("PCFG.jl")
 include("ConjugateModels.jl")
 include("GeneralCategories.jl")
 include("Headed.jl")

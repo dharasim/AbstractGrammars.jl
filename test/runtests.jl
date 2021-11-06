@@ -48,3 +48,34 @@ using .BinaryCountGrammar: test_binary_count_grammar
 @testset "count all binary trees" begin
   test_binary_count_grammar()
 end
+
+#############
+### PCFGs ###
+#############
+
+using AbstractGrammars.PCFG
+
+@testset "standard context-free rules" begin
+  r = 'a' --> ('b', 'c')
+  @test isbits(r) # ensure that r is stack-allocated
+  @test apply(r, 'a') == ('b', 'c')
+  @test apply(r, 'b') === nothing
+  @test arity(r) == 2
+
+  derivation = [
+    'A' --> 'B', 
+    'B' --> ('C', 'D'),
+    'C' --> 'c',
+    'D' --> ('B', 'A'),
+    'B' --> 'b',
+    'A' --> 'a']
+  @test arity.(derivation) == [1, 2, 1, 2, 1, 1]
+
+  tree = apply(derivation, 'A')
+  @test tree isa Tree{Char}
+  @test Char == eltype(tree)
+  @test labels(tree) == ['A', 'B', 'C', 'c', 'D', 'B', 'b', 'A', 'a']
+  @test leaflabels(tree) == ['c', 'b', 'a']
+  @test innerlabels(tree) == ['A', 'B', 'C', 'D', 'B', 'A']
+  derivation == tree2derivation(treelet2cfrule, tree)
+end
