@@ -1,12 +1,12 @@
 module Headed
 
-export Grammar, Rule, start_rule, termination_rule, duplication_rule, leftheaded_rule, 
-  rightheaded_rule
+export Grammar, Rule, start_rule, termination_rule, duplication_rule, 
+    leftheaded_rule, rightheaded_rule
 
 using ..AbstractGrammars: AbstractRule, AbstractGrammar, Tag, App
 using ..AbstractGrammars.GeneralCategories
 
-import ..AbstractGrammars: apply, push_completions!, default
+import ..AbstractGrammars: apply, arity, push_completions!, default
 import Distributions:logpdf
 
 #############
@@ -44,6 +44,16 @@ function apply(r::Rule, c::Category)
     "terminate"   ⊣ r                && return (terminal_category(c),)
     "default"     ⊣ r                && error("default rule cannot be applied")
     return nothing
+end
+
+function arity(r::Rule)
+    if r.tag in ("duplicate", "leftheaded", "rightheaded")
+        2
+    elseif r.tag in ("start", "terminate")
+        1
+    else
+        error("arity not defined for rule $r")
+    end
 end
 
 ################
