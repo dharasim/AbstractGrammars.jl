@@ -6,7 +6,7 @@ import AbstractGrammars: push_completions!
 
 export test_binary_count_grammar
 
-@enum Category nonterminal terminal
+@enum Category terminal nonterminal
 
 # rules can either branch or terminate
 @enum RuleKind branch terminate

@@ -8,8 +8,17 @@ export
 # utils
 Tag, ⊣, @tag_str, normalize, default,
 
-# Rule and grammar interface
-AbstractRule, AbstractGrammar, App, apply, arity, push_completions!,
+# Category interface
+AbstractCategory, isstart, isnonterminal, isterminal,
+StdCategory, start_category, terminal_category, nonterminal_category,
+
+# Rule interface
+AbstractRule, arity, apply, App,
+StdRule, -->,
+
+# Grammar interface
+AbstractGrammar, push_completions!,
+StdGrammar,
 
 # Scorings
 InsideScoring, CountScoring, BooleanScoring, BestDerivationScoring,
@@ -19,8 +28,9 @@ WDS, sample_derivations,
 Chart, chartparse,
 
 # Trees
-Tree, labels, innerlabels, leaflabels, tree_similarity, isleaf, tree2derivation,
-Treelet, treelets
+Tree, labels, innerlabels, leaflabels, tree_similarity, isleaf, 
+Treelet, treelets, 
+dict2tree, tree2derivation, treelet2stdrule
 
 ###############
 ### Imports ###
@@ -59,18 +69,14 @@ normalize(xs) = xs ./ sum(xs)
 ### Included files ###
 ######################
 
+# include submodules
+include("AtMosts.jl")
+include("ConjugateModels.jl")
+
 # main module code
-include("interface.jl")
+include("main.jl")
 include("chartparse.jl")
 include("scorings.jl")
 include("trees.jl")
-
-# include submodules
-include("AtMosts.jl")
-include("PCFG.jl")
-include("ConjugateModels.jl")
-include("GeneralCategories.jl")
-include("Headed.jl")
-include("HeadedTyped.jl")
 
 end # module

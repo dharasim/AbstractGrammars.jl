@@ -1,9 +1,10 @@
 module Headed
 
 export Grammar, Rule, start_rule, termination_rule, duplication_rule, 
-    leftheaded_rule, rightheaded_rule
+    leftheaded_rule, rightheaded_rule, treelet2headedrule
 
-using ..AbstractGrammars: AbstractRule, AbstractGrammar, Tag, App
+using ..AbstractGrammars: AbstractRule, AbstractGrammar, Tag, App, 
+    Treelet, arity
 using ..AbstractGrammars.GeneralCategories
 
 import ..AbstractGrammars: apply, arity, push_completions!, default
@@ -55,6 +56,26 @@ function arity(r::Rule)
         error("arity not defined for rule $r")
     end
 end
+
+# function treelet2headedruleapp(treelet::Treelet{Category{T}}) where T
+#     if arity(treelet) == 1
+#         lhs = treelet.root_label
+#         rhs = treelet.child_labels[1]
+#         if "start" ⊣ lhs && "nonterminal" ⊣ rhs 
+#             return start_rule(rhs)
+#         elseif "nonterminal" ⊣ lhs && "terminal" ⊣ rhs && lhs.val == rhs.val
+#             return termination_rule(T)
+#         else
+#             return error("cannot convert treelet to headed rule")
+#         end
+#     elseif arity(treelet) == 2
+#         lhs = treelet.root_label
+#         rhs1, rhs2 = treelet.child_labels
+        
+#         if 
+
+    
+# end
 
 ################
 ### Grammars ###

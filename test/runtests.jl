@@ -53,8 +53,6 @@ end
 ### PCFGs ###
 #############
 
-using AbstractGrammars.PCFG
-
 @testset "standard context-free rules" begin
   r = 'a' --> ('b', 'c')
   @test isbits(r) # ensure that r is stack-allocated
@@ -77,5 +75,5 @@ using AbstractGrammars.PCFG
   @test labels(tree) == ['A', 'B', 'C', 'c', 'D', 'B', 'b', 'A', 'a']
   @test leaflabels(tree) == ['c', 'b', 'a']
   @test innerlabels(tree) == ['A', 'B', 'C', 'D', 'B', 'A']
-  derivation == tree2derivation(treelet2cfrule, tree)
+  derivation == tree2derivation(treelet2stdrule, tree)
 end

@@ -1,5 +1,4 @@
 using AbstractGrammars
-using AbstractGrammars.GeneralCategories
 
 # imports for overloading
 import AbstractGrammars: default
@@ -11,7 +10,7 @@ using Pitches: parsespelledpitch, Pitch, SpelledIC, MidiIC, midipc, alteration, 
 using Underscores: @_
 
 # named imports
-import AbstractGrammars.Headed
+# import AbstractGrammars.Headed
 import HTTP, JSON
 
 #############
@@ -67,96 +66,32 @@ function parse_chord(str)
   return Chord(root, form)
 end
 
-##################################
-### General context-free rules ###
-##################################
-
-using AbstractGrammars.AtMosts
-
-struct CFRule{C} <: AbstractRule{C}
-  lhs :: C
-  rhs :: AtMost2{C}
-end
-
-CFRule(lhs, rhs...) = CFRule(lhs, AtMost2(rhs...))
-arity(r::CFRule) = length(r.rhs)
-# @assert [CFRule('a', 'b', 'c'), CFRule('d', 'e')] |> eltype |> isbitstype
-
-function derivation(tree::Tree{T}) where T
-  rules = [CFRule(start_category(T), nonterminal_category(tree.label))]
-
-  push_rules(tree::Leaf) = begin 
-    r = CFRule(nonterminal_category(tree.label), terminal_category(tree.label))
-    push!(rules, r)
-  end
-  push_rules(tree::Binary) = begin
-    r = CFRule(
-      nonterminal_category(tree.label), 
-      nonterminal_category(tree.left.label), 
-      nonterminal_category(tree.right.label))
-    push!(rules, r)
-    push_rules(tree.left)
-    push_rules(tree.right)
-  end
-
-  push_rules(tree)
-  return rules
-end
-
-function derivation2tree(grammar, derivation::Vector{App{C, R}}) where {C, R}
-  i = 0 # rule index
-  next_app() = (i += 1; derivation[i])
-  
-  function rewrite(nt)
-    app = next_app()
-    @assert nt == app.lhs
-    rhs = apply(grammar, app)
-    if length(rhs) == 1 # terminal rule
-      Leaf(rhs[1])
-    elseif length(rhs) == 2 # binary rule
-      Binary(nt, rewrite(rhs[1]), rewrite(rhs[2]))
-    else
-      error("only binary rules and unary termination rules are supported")
-    end
-  end
-
-  app1, app2 = derivation[1:2]
-  if length(apply(grammar, app1)) == 1
-    # if initial rule is unary, then skip it for the tree
-    i += 1
-    rewrite(app2.lhs)
-  else
-    rewrite(app1.lhs)
-  end
-end
-
-function cfrule_to_headedrule_app(r::CFRule{Headed.Category{T}}) where T
-    if arity(r) == 1 && "start" ⊣ r.lhs && "nonterminal" ⊣ r.rhs[1]
-      return App(r.lhs, Headed.start_rule(r.rhs[1]))
-    elseif arity(r) == 1 && "nonterminal" ⊣ r.lhs && "terminal" ⊣ r.rhs[1]
-      return App(r.lhs, Headed.termination_rule(T))
-    elseif arity(r) == 2 && "nonterminal" ⊣ (r.lhs, r.rhs...)
-      if r.lhs == r.rhs[1] == r.rhs[2]
-        return App(r.lhs, Headed.duplication_rule(T))
-      elseif r.lhs == r.rhs[1] && r.rhs[1] != r.rhs[2]
-        return App(r.lhs, Headed.leftheaded_rule(r.rhs[2]))
-      elseif r.lhs == r.rhs[2] && r.rhs[1] != r.rhs[2]
-        return App(r.lhs, Headed.rightheaded_rule(r.rhs[1]))
-      end
-    end
-    error("$r could not be converted into a headed rule")
-end
-
 #####################
 ### Read treebank ###
 #####################
 
+const TPCC = Chord{Pitch{SpelledIC}} # Tonal Pitch-Class Chord
+
 function title_and_tree(tune)
   remove_asterisk(label::String) = replace(label, "*" => "")
-  (title = tune["title"], 
-   tree = @_ tune["trees"][1]["open_constituent_tree"] |> 
-             dict2tree(remove_asterisk, __) |>
-             map(parse_chord, __))
+
+  function transform(tree)
+    function categorize(tree)
+      if isleaf(tree)
+        Tree(nonterminal_category(tree.label), Tree(terminal_category(tree.label)))
+      else
+        Tree(nonterminal_category(tree.label), map(categorize, tree.children))
+      end
+    end
+    Tree(start_category(TPCC), categorize(tree))
+  end
+
+  tree = @_ tune["trees"][1]["open_constituent_tree"] |> 
+    dict2tree(remove_asterisk, __) |>
+    map(parse_chord, __) |>
+    transform(__)
+
+  (title = tune["title"], tree = tree)
 end
 
 treebank_url = "https://raw.githubusercontent.com/DCMLab/JazzHarmonyTreebank/master/treebank.json"
@@ -167,38 +102,33 @@ treebank = @_ tunes |> filter(haskey(_, "trees"), __) |> map(title_and_tree, __)
 ### Construct grammar ###
 #########################
 
-const TPCC = Chord{Pitch{SpelledIC}} # Tonal Pitch-Class Chord
-
 all_chords = collect(
   Chord(parsespelledpitch(letter * acc), form) 
   for letter in 'A':'G'
   for acc in ("b", "#", "")
   for form in instances(ChordForm))
 
-startsym = start_category(TPCC)
-ts       = terminal_category.(all_chords)
-nts      = nonterminal_category.(all_chords)
+START = start_category(TPCC)
+ts    = terminal_category.(all_chords)
+nts   = nonterminal_category.(all_chords) 
 
-start_rules = Set(Headed.start_rule.(nts))
-nonstart_rules = Set([
-  Headed.termination_rule(TPCC);
-  Headed.duplication_rule(TPCC);
-  Headed.leftheaded_rule.(nts);
-  Headed.rightheaded_rule.(nts)])
-
-rules = union(start_rules, nonstart_rules)
+rules = Set([
+  [START --> nt for nt in nts]; # start rules
+  [nt  --> t         for (nt, t) in zip(nts, ts)]; # termination rules
+  [nt  --> (nt,nt)   for nt in nts]; # duplication rules
+  [nt1 --> (nt1,nt2) for nt1 in nts for nt2 in nts if nt1 != nt2]; #left-headed
+  [nt2 --> (nt1,nt2) for nt1 in nts for nt2 in nts if nt1 != nt2]; #right-headed
+  ])
 
 # probability model
+applicable_rules(all_rules, category) = filter(r -> r.lhs==category, all_rules)
 flat_dircat(xs) = DirCat(Dict(x => 1 for x in xs))
-params = (
-  start_dist = flat_dircat(start_rules),
-  nonstart_dists = Dict(nt => flat_dircat(nonstart_rules) for nt in nts))
+prior_params() = Dict(
+  nt => flat_dircat(applicable_rules(rules, nt)) for nt in [nts; START])
 
-function logpdf(g::Headed.Grammar, lhs, rule)
-  if "start" ⊣ lhs && "start" ⊣ rule
-    logpdf(g.params.start_dist, rule)
-  elseif "nonterminal" ⊣ lhs && !("startrule" ⊣ rule)
-    logpdf(g.params.nonstart_dists[lhs], rule)
+function logpdf(grammar::StdGrammar, lhs, rule)
+  if lhs == rule.lhs
+    logpdf(grammar.params[lhs], rule)
   else
     log(0)
   end
@@ -206,18 +136,17 @@ end
 
 # supervised training by observation of trees
 function observe_tree!(params, tree)
-  apps = cfrule_to_headedrule_app.(derivation(tree))
-  for app in apps
-    if "start" ⊣ app.rule
-      add_obs!(params.start_dist, app.rule, 1)
-    else
-      add_obs!(params.nonstart_dists[app.lhs], app.rule, 1)
+  for rule in tree2derivation(treelet2stdrule, tree)
+    try
+      add_obs!(params[rule.lhs], rule, 1)
+    catch
+      print("x")
     end
   end
 end
 
-foreach(tune -> observe_tree!(params, tune.tree), treebank)
-grammar = Headed.Grammar(rules, params)
+grammar = StdGrammar([START], rules, prior_params())
+foreach(tune -> observe_tree!(grammar.params, tune.tree), treebank)
 
 ############################
 ### Test with dummy data ###
@@ -228,23 +157,24 @@ grammar = Headed.Grammar(rules, params)
 terminalss = fill([terminal_category(Chord(p"C", MAJ7))], 50)
 scoring = WDS(grammar) # weighted derivation scoring
 @time chart = chartparse(grammar, scoring, terminalss)
-@time sample_derivations(scoring, chart[1,length(terminalss)][startsym], 1) .|> 
-  (app -> app.rule.tag)
+@time sample_derivations(scoring, chart[1,length(terminalss)][START], 1) .|> 
+  (app -> arity(app.rule))
 
 ##########################
 ### Test with treebank ###
 ##########################
 
 scoring = BestDerivationScoring()
-treebank = treebank[1:10]
-accs = zeros(length(treebank))
-@time for i in eachindex(treebank)
+treebank_sample = treebank[1:10]
+accs = zeros(length(treebank_sample))
+@time for i in eachindex(treebank_sample)
   print(i, ' ', treebank[i].title, ' ')
   tree = treebank[i].tree
   terminalss = [[terminal_category(c)] for c in leaflabels(tree)]
   chart = chartparse(grammar, scoring, terminalss)
-  apps = chart[1, length(terminalss)][startsym].apps
-  accs[i] = tree_similarity(tree, derivation2tree(grammar, apps))
+  apps = chart[1, length(terminalss)][START].apps
+  # accs[i] = tree_similarity(tree, derivation2tree(grammar, apps))
+  accs[i] = tree_similarity(tree, apply(getproperty.(apps, :rule), START))
   println(accs[i])
 end
 sum(accs) / length(accs)
