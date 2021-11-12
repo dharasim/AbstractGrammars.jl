@@ -69,7 +69,8 @@ end
 
 # Implementation idea: break rec. structure with indices into a vector (store).
 # Ihe store contains unboxed values, which reduces GC times.
-# Additionally, it allows to update probabilities without parsing again (not yet implemented).
+# Additionally, it allows to update probabilities without parsing again 
+# (not yet implemented).
 
 @enum ScoreTag ADD MUL VAL ZERO
 
@@ -149,7 +150,10 @@ function mul_scores(s::WDS, x, y)
   return ScoredFreeEntry(s.store, *, x, y)
 end
 
-function sample_derivations(s::WDS{S,T}, x::ScoredFreeEntry{S,T}, n::Int) where {S,T}
+function sample_derivations(
+    s::WDS{S,T}, x::ScoredFreeEntry{S,T}, n::Int
+  ) where {S,T}
+  
   vals = Vector{T}()
   for _ in 1:n
     sample_derivation!(vals, s, x)

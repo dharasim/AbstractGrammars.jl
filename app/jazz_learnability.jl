@@ -116,7 +116,7 @@ rules = Set([
   [START --> nt for nt in nts]; # start rules
   [nt  --> t         for (nt, t) in zip(nts, ts)]; # termination rules
   [nt  --> (nt,nt)   for nt in nts]; # duplication rules
-  [nt1 --> (nt1,nt2) for nt1 in nts for nt2 in nts if nt1 != nt2]; #left-headed
+  # [nt1 --> (nt1,nt2) for nt1 in nts for nt2 in nts if nt1 != nt2]; #left-headed
   [nt2 --> (nt1,nt2) for nt1 in nts for nt2 in nts if nt1 != nt2]; #right-headed
   ])
 
@@ -154,7 +154,8 @@ foreach(tune -> observe_tree!(grammar.params, tune.tree), treebank)
 
 # terminalss = collect([H.terminal_cat(c)]
 #   for c in [Chord(p"C", MAJ7), Chord(p"G", DOM), Chord(p"C", MAJ7)])
-terminalss = fill([terminal_category(Chord(p"C", MAJ7))], 50)
+# terminalss = fill([terminal_category(Chord(p"C", MAJ7))], 50)
+terminalss = [[terminal_category(rand(all_chords))] for _ in 1:50]
 scoring = WDS(grammar) # weighted derivation scoring
 @time chart = chartparse(grammar, scoring, terminalss)
 @time sample_derivations(scoring, chart[1,length(terminalss)][START], 1) .|> 
@@ -164,19 +165,30 @@ scoring = WDS(grammar) # weighted derivation scoring
 ### Test with treebank ###
 ##########################
 
-scoring = BestDerivationScoring()
-treebank_sample = treebank[1:10]
-accs = zeros(length(treebank_sample))
-@time for i in eachindex(treebank_sample)
-  print(i, ' ', treebank[i].title, ' ')
-  tree = treebank[i].tree
-  terminalss = [[terminal_category(c)] for c in leaflabels(tree)]
-  chart = chartparse(grammar, scoring, terminalss)
-  apps = chart[1, length(terminalss)][START].apps
-  # accs[i] = tree_similarity(tree, derivation2tree(grammar, apps))
-  accs[i] = tree_similarity(tree, apply(getproperty.(apps, :rule), START))
-  println(accs[i])
+# using Distributed
+# using SharedArrays
+
+# addprocs(6)
+# workers()
+# @everywhere using AbstractGrammars
+
+function calc_accs(grammar, treebank, startsymbol)
+  scoring = BestDerivationScoring()
+  accs = zeros(length(treebank))
+  for i in eachindex(treebank)
+    print(i, ' ', treebank[i].title, ' ')
+    tree = treebank[i].tree
+    terminalss = [[c] for c in leaflabels(tree)]
+    chart = chartparse(grammar, scoring, terminalss)
+    apps = chart[1, length(terminalss)][startsymbol].apps
+    derivation = [app.rule for app in apps]
+    accs[i] = tree_similarity(tree, apply(derivation, startsymbol))
+    println(accs[i])
+  end
+  return accs
 end
+
+@time accs = calc_accs(grammar, treebank[1:150], START)
 sum(accs) / length(accs)
 
 ################################################################################
