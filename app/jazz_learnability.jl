@@ -70,12 +70,13 @@ end
 ### Read treebank ###
 #####################
 
-const TPCC = Chord{Pitch{SpelledIC}} # Tonal Pitch-Class Chord
+# Tonal Pitch-Class Chord
+const TPCC = Chord{Pitch{SpelledIC}}
 
-function title_and_tree(tune)
+function preprocess_tree!(tune)
   remove_asterisk(label::String) = replace(label, "*" => "")
 
-  function transform(tree)
+  function categorize_and_insert_unary_rules(tree)
     function categorize(tree)
       if isleaf(tree)
         Tree(nonterminal_category(tree.label), Tree(terminal_category(tree.label)))
@@ -86,17 +87,19 @@ function title_and_tree(tune)
     Tree(start_category(TPCC), categorize(tree))
   end
 
-  tree = @_ tune["trees"][1]["open_constituent_tree"] |> 
-    dict2tree(remove_asterisk, __) |>
-    map(parse_chord, __) |>
-    transform(__)
+  if haskey(tune, "trees")
+    tune["tree"] = @_ tune["trees"][1]["open_constituent_tree"] |> 
+      dict2tree(remove_asterisk, __) |>
+      map(parse_chord, __) |>
+      categorize_and_insert_unary_rules(__)
+  end
 
-  (title = tune["title"], tree = tree)
+  return tune
 end
 
 treebank_url = "https://raw.githubusercontent.com/DCMLab/JazzHarmonyTreebank/master/treebank.json"
-tunes = HTTP.get(treebank_url).body |> String |> JSON.parse
-treebank = @_ tunes |> filter(haskey(_, "trees"), __) |> map(title_and_tree, __)
+tunes = HTTP.get(treebank_url).body |> String |> JSON.parse .|> preprocess_tree!
+treebank = filter(tune -> haskey(tune, "tree"), tunes)
 
 #########################
 ### Construct grammar ###
@@ -146,7 +149,7 @@ function observe_tree!(params, tree)
 end
 
 grammar = StdGrammar([START], rules, prior_params())
-foreach(tune -> observe_tree!(grammar.params, tune.tree), treebank)
+foreach(tune -> observe_tree!(grammar.params, tune["tree"]), treebank)
 
 ############################
 ### Test with dummy data ###
@@ -177,7 +180,7 @@ function calc_accs(grammar, treebank, startsymbol)
   accs = zeros(length(treebank))
   for i in eachindex(treebank)
     print(i, ' ', treebank[i].title, ' ')
-    tree = treebank[i].tree
+    tree = treebank[i]["tree"]
     terminalss = [[c] for c in leaflabels(tree)]
     chart = chartparse(grammar, scoring, terminalss)
     apps = chart[1, length(terminalss)][startsymbol].apps
@@ -193,3 +196,10 @@ sum(accs) / length(accs)
 
 ################################################################################
 
+tune = filter(tune -> tune["title"] == "Summertime", treebank)[1]
+
+tune["title"]
+tune["tree"] |> leaflabels
+tune["chords"]
+tune["measures"]
+tune["beats"]
