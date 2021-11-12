@@ -274,3 +274,87 @@ for tune in tunes
   end
 end
 failed
+
+
+
+import AbstractGrammars: arity, apply, push_completions!
+
+const RhythmCategory = StdCategory{Rational{Int}}
+
+# possible tags: start, termination, split
+struct RhythmRule <: AbstractRule{RhythmCategory}
+  tag   :: Tag
+  ratio :: Rational{Int}
+end
+
+const rhythm_start_category = start_category(Rational{Int})
+const rhythm_start_rule = RhythmRule("start", default(Rational{Int}))
+const rhythm_termination = RhythmRule("termination", default(Rational{Int}))
+
+rhythm_split_rule(ratio) = RhythmRule("split", ratio)
+arity(rule::RhythmRule) = "split" ⊣ rule ? 2 : 1
+
+function apply(rule::RhythmRule, category::RhythmCategory)
+  if "start" ⊣ rule && "start" ⊣ category
+    tuple(rhythm_nonterminal(1))
+  elseif "termination" ⊣ rule && "nonterminal" ⊣ category
+    tuple(terminal_category(category))
+  elseif "split" ⊣ rule && "nonterminal" ⊣ category
+    tuple(
+      nonterminal_category(rule.ratio * category.val), 
+      nonterminal_category((1 - rule.ratio) * category.val))
+  else
+    nothing
+  end
+end
+
+mutable struct RhythmGrammar{P} <: AbstractGrammar{RhythmRule}
+  rules  :: Set{RhythmRule}
+  params :: P
+
+  function RhythmGrammar(rules, params::P) where P
+    @assert rhythm_start_rule in rules && rhythm_termination in rules
+    new{P}(rules, params)
+  end
+end
+
+function push_completions!(::RhythmGrammar, stack, category)
+  if "terminal" ⊣ category
+    push!(stack, App(nonterminal_category(category), rhythm_termination))
+  elseif "nonterminal" ⊣ category
+    push!(stack, App(rhythm_start_category, rhythm_start_rule))
+  end
+end
+
+function push_completions!(grammar::RhythmGrammar, stack, c1, c2)
+  if "nonterminal" ⊣ c1 && "nonterminal" ⊣ c2
+    s = sum(c1.val + c2.val)
+    ratio = c1.val / s
+    rule = rhythm_split_rule(ratio)
+    if rule in grammar.rules
+      push!(stack, App(nonterminal_category(s), rule))
+    end
+  end
+end
+
+function logpdf(grammar::RhythmGrammar, lhs, rule)
+  error("todo")
+end
+
+split_rules = Set([rhythm_split_rule(d//n) for d in 1:100 for n in d+1:100])
+rhythm_rules = union(split_rules, [rhythm_start_rule, rhythm_termination])
+params = flat_dircat([rhythm_termination; collect(split_rules)])
+rhythm_grammar = RhythmGrammar(rhythm_rules, params)
+
+tune = treebank[30]
+terminalss = [[terminal_category(d)] for d in normalize(Rational.(chord_durations(tune)))]
+scoring = CountScoring()
+@time chart = chartparse(rhythm_grammar, scoring, terminalss)
+chart[1,length(terminalss)][rhythm_start_category]
+
+
+start_category
+
+StdCategory
+
+AbstractRule{}
