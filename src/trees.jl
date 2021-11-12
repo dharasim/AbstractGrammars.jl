@@ -23,6 +23,8 @@ function dict2tree(f, dict; label_key="label", children_key="children")
   Tree(label, children)
 end
 
+dict2tree(dict; args...) = dict2tree(identity, dict; args...)
+
 function apply(derivation::Vector{<:AbstractRule}, c)
   i = 0 # rule index
   next_rule() = (i += 1; derivation[i])
