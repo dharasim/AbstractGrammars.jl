@@ -103,7 +103,13 @@ function relabel_with_spans(tree)
 end
 
 function collapse_unaries(tree)
-  error("todo")
+  if isleaf(tree)
+    tree
+  elseif length(tree.children) == 1
+    collapse_unaries(tree.children[1])
+  else
+    Tree(tree.label, map(collapse_unaries, tree.children))
+  end
 end
 
 function constituent_spans(tree)
