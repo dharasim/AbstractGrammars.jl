@@ -18,7 +18,8 @@ end
 
 function dict2tree(f, dict; label_key="label", children_key="children")
   label = f(dict[label_key])
-  children = [dict2tree(f, child) for child in dict[children_key]]
+  T = typeof(label)
+  children = Tree{T}[dict2tree(f, child) for child in dict[children_key]]
   Tree(label, children)
 end
 
