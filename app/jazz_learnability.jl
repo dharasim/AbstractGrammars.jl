@@ -194,12 +194,83 @@ end
 @time accs = calc_accs(grammar, treebank[1:150], START)
 sum(accs) / length(accs)
 
+########################
+### Read rhythm data ###
+########################
+
+function chord_durations(tune)
+  bpm = tune["meter"]["numerator"] # beats per measure
+  ms  = tune["measures"]
+  bs  = tune["beats"]
+  n   = length(tune["chords"])
+
+  @assert n == length(ms) == length(bs) "error in treebank's rhythm data"
+  ds = zeros(Int, n) # initialize list of durations
+  for i in 1:n-1
+    b1, b2 = bs[i:i+1] # current and next beat
+    m1, m2 = ms[i:i+1] # measure of current and next beat
+    # The chord on the current beat offsets either at the next chord or
+    # the end of the current measure.
+    # This is by convention of the treebank annotations.
+    ds[i] = m1 == m2 ? b2 - b1 : bpm + 1 - b1
+  end
+  ds[n] = bpm + 1 - bs[n]
+
+  @assert all(d -> 0 < d, ds) "bug in chord-duration calculation or data"
+  return ds
+end
+
+function leaf_durations(tune)
+  ds = chord_durations(tune)
+  ls = leaflabels(tune["tree"])
+  if length(ds) == length(ls)
+    ds
+  elseif length(ds) + 1 == length(ls) # tune ends on its first chord
+    [ds; sum(ds)]
+  elseif length(ds) > length(ls) # turnaround is omitted in the tree
+    [ds[1:length(ls)-1]; sum(ds[length(ls):end])]
+  else # much more chords than chord durations
+    error("list of chord durations not long enough")
+  end
+end
+
+function normalized_duration_tree(tune)
+  lds = normalize(Rational.(leaf_durations(tune)))
+  k = 0 # leaf index
+  next_leafduration() = (k += 1; lds[k])
+
+  function relabel(tree) 
+    if isleaf(tree)
+      Tree(next_leafduration())
+    elseif length(tree.children) == 1
+      child = relabel(tree.children[1])
+      Tree(child.label, child)
+    elseif length(tree.children) == 2
+      left  = relabel(tree.children[1])
+      right = relabel(tree.children[2])
+      Tree(left.label + right.label, left, right)
+    else
+      error("tree is not (even weakly) binary")
+    end
+  end
+
+  return relabel(tune["tree"])
+end
+
 ################################################################################
 
-tune = filter(tune -> tune["title"] == "Summertime", treebank)[1]
+@time chord_durations(tune)
+@time leaf_durations(tune)
+@time normalized_duration_tree.(treebank)
+@time chord_durations.(tunes);
 
-tune["title"]
-tune["tree"] |> leaflabels
-tune["chords"]
-tune["measures"]
-tune["beats"]
+failed = 0
+for tune in tunes
+  try
+    chord_durations(tune)
+  catch
+    failed += 1
+    println(tune["title"])
+  end
+end
+failed
