@@ -20,7 +20,7 @@ function chartparse(grammar::G, scoring, terminalss) where {C,R <: AbstractRule{
     S = score_type(grammar, scoring)
     chart = empty_chart(C, S, n)
     stack = Vector{App{C,R}}() # channel for communicating completions
-  # using a single stack is much more efficient than constructing multiple arrays
+    # using a single stack is much more efficient than constructing multiple arrays
     stack_unary = Vector{ScoredCategory{C,S}}()
 
     score(app) = ruleapp_score(scoring, grammar, app.lhs, app.rule)

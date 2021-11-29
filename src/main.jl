@@ -34,7 +34,7 @@ struct StdCategory{T}
   end
   function StdCategory(tag, T::Type) 
     @assert tag in ("start", "default")
-    new{T}(tag)
+    new{T}(tag, default(T))
   end
 end
 

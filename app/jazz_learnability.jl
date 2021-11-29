@@ -2,7 +2,7 @@ using AbstractGrammars
 
 # imports for overloading
 import AbstractGrammars: default
-import Distributions: logpdf
+import Distributions: logpdf, BetaBinomial
 
 # imports without overloading
 using AbstractGrammars.ConjugateModels: DirCat, add_obs!
@@ -73,19 +73,19 @@ end
 # Tonal Pitch-Class Chord
 const TPCC = Chord{Pitch{SpelledIC}}
 
+function categorize_and_insert_unary_rules(tree; root=start_category(TPCC))
+  function categorize(tree)
+    if isleaf(tree)
+      Tree(nonterminal_category(tree.label),Tree(terminal_category(tree.label)))
+    else
+      Tree(nonterminal_category(tree.label), map(categorize, tree.children))
+    end
+  end
+  Tree(root, categorize(tree))
+end
+
 function preprocess_tree!(tune)
   remove_asterisk(label::String) = replace(label, "*" => "")
-
-  function categorize_and_insert_unary_rules(tree)
-    function categorize(tree)
-      if isleaf(tree)
-        Tree(nonterminal_category(tree.label), Tree(terminal_category(tree.label)))
-      else
-        Tree(nonterminal_category(tree.label), map(categorize, tree.children))
-      end
-    end
-    Tree(start_category(TPCC), categorize(tree))
-  end
 
   if haskey(tune, "trees")
     tune["tree"] = @_ tune["trees"][1]["open_constituent_tree"] |> 
@@ -175,12 +175,12 @@ scoring = WDS(grammar) # weighted derivation scoring
 # workers()
 # @everywhere using AbstractGrammars
 
-function calc_accs(grammar, treebank, startsymbol)
+function calc_accs(grammar, treebank, startsymbol; treekey="tree")
   scoring = BestDerivationScoring()
   accs = zeros(length(treebank))
   for i in eachindex(treebank)
-    print(i, ' ', treebank[i].title, ' ')
-    tree = treebank[i]["tree"]
+    print(i, ' ', treebank[i]["title"], ' ')
+    tree = treebank[i][treekey]
     terminalss = [[c] for c in leaflabels(tree)]
     chart = chartparse(grammar, scoring, terminalss)
     apps = chart[1, length(terminalss)][startsymbol].apps
@@ -191,8 +191,8 @@ function calc_accs(grammar, treebank, startsymbol)
   return accs
 end
 
-@time accs = calc_accs(grammar, treebank[1:150], START)
-sum(accs) / length(accs)
+# @time accs = calc_accs(grammar, treebank[1:150], START)
+# sum(accs) / length(accs)
 
 ########################
 ### Read rhythm data ###
@@ -254,28 +254,36 @@ function normalized_duration_tree(tune)
     end
   end
 
-  return relabel(tune["tree"])
+  return relabel(dict2tree(tune["trees"][1]["open_constituent_tree"]))
 end
 
-################################################################################
-
-@time chord_durations(tune)
-@time leaf_durations(tune)
-@time normalized_duration_tree.(treebank)
-@time chord_durations.(tunes);
-
-failed = 0
 for tune in tunes
-  try
-    chord_durations(tune)
-  catch
-    failed += 1
-    println(tune["title"])
+  if haskey(tune, "tree")
+    tune["rhythm_tree"] = categorize_and_insert_unary_rules(
+      normalized_duration_tree(tune), 
+      root=start_category(Rational{Int}))
   end
 end
-failed
 
+# @time chord_durations(tune)
+# @time leaf_durations(tune)
+# @time normalized_duration_tree.(treebank)
+# @time chord_durations.(tunes);
 
+# failed = 0
+# for tune in tunes
+#   try
+#     chord_durations(tune)
+#   catch
+#     failed += 1
+#     println(tune["title"])
+#   end
+# end
+# failed
+
+######################
+### Rhythm Grammar ###
+######################
 
 import AbstractGrammars: arity, apply, push_completions!
 
@@ -296,7 +304,7 @@ arity(rule::RhythmRule) = "split" ⊣ rule ? 2 : 1
 
 function apply(rule::RhythmRule, category::RhythmCategory)
   if "start" ⊣ rule && "start" ⊣ category
-    tuple(rhythm_nonterminal(1))
+    tuple(nonterminal_category(1//1))
   elseif "termination" ⊣ rule && "nonterminal" ⊣ category
     tuple(terminal_category(category))
   elseif "split" ⊣ rule && "nonterminal" ⊣ category
@@ -338,7 +346,13 @@ function push_completions!(grammar::RhythmGrammar, stack, c1, c2)
 end
 
 function logpdf(grammar::RhythmGrammar, lhs, rule)
-  error("todo")
+  if "start" ⊣ lhs && "start" ⊣ rule
+    log(1)
+  elseif "nonterminal" ⊣ lhs && rule in grammar.rules
+    logpdf(grammar.params, rule)
+  else # not applicable
+    log(0)
+  end
 end
 
 split_rules = Set([rhythm_split_rule(d//n) for d in 1:100 for n in d+1:100])
@@ -348,13 +362,195 @@ rhythm_grammar = RhythmGrammar(rhythm_rules, params)
 
 tune = treebank[30]
 terminalss = [[terminal_category(d)] for d in normalize(Rational.(chord_durations(tune)))]
-scoring = CountScoring()
+scoring = WDS(rhythm_grammar)
 @time chart = chartparse(rhythm_grammar, scoring, terminalss)
 chart[1,length(terminalss)][rhythm_start_category]
 
+# @time accs = calc_accs(rhythm_grammar, treebank, rhythm_start_category, treekey="rhythm_tree")
+# sum(accs) / length(accs)
 
-start_category
+function treelet2rhythmrule(treelet)
+  root = treelet.root_label
+  children = treelet.child_labels
+  if arity(treelet) == 1
+    child = children[1]
+    if "start" ⊣ root && nonterminal_category(1//1) == child
+      rhythm_start_rule
+    elseif "nonterminal" ⊣ root && "terminal" ⊣ child && root.val == child.val
+      rhythm_termination
+    else
+      error("cannot convert unary $treelet into a rhythm rule")
+    end
+  elseif arity(treelet) == 2 && "nonterminal" ⊣ (root, children...) &&
+         root.val == children[1].val + children[2].val
+    rhythm_split_rule(children[1].val // root.val)
+  else
+    error("cannot convert binary $treelet into a rhythm rule")
+  end
+end
 
-StdCategory
+function observe_rhythm_tree!(params, tree)
+  for rule in tree2derivation(treelet2rhythmrule, tree)
+    if !("start" ⊣ rule)
+      try
+        add_obs!(params, rule, 1)
+      catch
+        print("x")
+      end
+    end
+  end
+end
 
-AbstractRule{}
+for tune in treebank 
+  observe_rhythm_tree!(params, tune["rhythm_tree"])
+end
+
+# @time accs = calc_accs(rhythm_grammar, treebank, rhythm_start_category, treekey="rhythm_tree")
+# sum(accs) / length(accs)
+
+#######################
+### Product Grammar ###
+#######################
+
+struct ProductRule{C1, C2, R1 <: AbstractRule{C1}, R2 <: AbstractRule{C2}} <:  
+    AbstractRule{Tuple{C1, C2}}
+  rule1 :: R1
+  rule2 :: R2
+
+  function ProductRule(rule1::R1, rule2::R2) where 
+      {C1, C2, R1 <: AbstractRule{C1}, R2 <: AbstractRule{C2}}
+    @assert arity(rule1) == arity(rule2)
+    new{C1, C2, R1, R2}(rule1, rule2)
+  end
+end
+
+import Base: getindex
+function getindex(rule::ProductRule, i)
+  if i == 1
+    rule.rule1
+  elseif i == 2
+    rule.rule2
+  else
+    BoundsError(rule, i)
+  end
+end
+
+arity(rule::ProductRule) = arity(rule[1])
+
+function apply(rule::ProductRule{C1,C2}, category::Tuple{C1,C2}) where {C1,C2}
+  rhs1 = apply(rule[1], category[1])
+  rhs2 = apply(rule[2], category[2])
+  if isnothing(rhs1) || isnothing(rhs2)
+    nothing
+  else
+    tuple(zip(rhs1, rhs2)...)
+  end
+end
+
+rule = ProductRule(rand(rules), rand(split_rules))
+arity(rule)
+c = (rule[1].lhs, nonterminal_category(1//1))
+rhs = apply(rule, c)
+@assert rhs[1] isa Tuple && typeof(rhs[1]) == typeof(rhs[2])
+
+# not thread safe
+# for parallelization use one product grammar per thread
+mutable struct ProductGrammar{
+    C1, R1<:AbstractRule{C1}, G1<:AbstractGrammar{R1}, 
+    C2, R2<:AbstractRule{C2}, G2<:AbstractGrammar{R2},
+    P
+  } <: AbstractGrammar{ProductRule{C1,C2,R1,R2}}
+  grammar1 :: G1
+  grammar2 :: G2
+  stacks   :: Tuple{Vector{App{C1, R1}}, Vector{App{C2, R2}}}
+  params   :: P
+
+  function ProductGrammar(grammar1::G1, grammar2::G2, params::P) where {
+      C1, R1<:AbstractRule{C1}, G1<:AbstractGrammar{R1}, 
+      C2, R2<:AbstractRule{C2}, G2<:AbstractGrammar{R2},
+      P
+    }
+    stacks = tuple(Vector{App{C1, R1}}(), Vector{App{C2, R2}}())
+    new{C1,R1,G1,C2,R2,G2,P}(grammar1, grammar2, stacks, params)
+  end
+end
+
+function getindex(grammar::ProductGrammar, i)
+  if i == 1
+    grammar.grammar1
+  elseif i == 2
+    grammar.grammar2
+  else
+    BoundsError(grammar, i)
+  end
+end
+# product_grammar
+# product_grammar isa AbstractGrammar{ProductRule{StdCategory{TPCC}, RhythmCategory}}
+
+# function foo(grammar::G) where {C,R <: AbstractRule{C},G <: AbstractGrammar{R}}
+#   println.([C, R, G])
+# end
+
+# foo(product_grammar)
+
+# function push_completions!(grammar::ProductGrammar, stack, category)
+#   push_completions!(grammar[1], grammar.stacks[1], category[1])
+#   push_completions!(grammar[2], grammar.stacks[2], category[2])
+  
+#   for app1 in grammar.stacks[1], app2 in grammar.stacks[2]
+#     app = App((app1.lhs, app2.lhs), ProductRule(app1.rule, app2.rule))
+#     push!(stack, app)
+#   end
+
+#   empty!(grammar.stacks[1])
+#   empty!(grammar.stacks[2])
+#   return nothing
+# end
+
+function push_completions!(grammar::ProductGrammar, stack, categories...)
+  function unzip(xs)
+    n = length(first(xs))
+    ntuple(i -> map(x -> x[i], xs), n)
+  end
+
+  rhss = unzip(categories) # right-hand sides
+  push_completions!(grammar[1], grammar.stacks[1], rhss[1]...)
+  push_completions!(grammar[2], grammar.stacks[2], rhss[2]...)
+  
+  for app1 in grammar.stacks[1], app2 in grammar.stacks[2]
+    app = App((app1.lhs, app2.lhs), ProductRule(app1.rule, app2.rule))
+    push!(stack, app)
+  end
+
+  empty!(grammar.stacks[1])
+  empty!(grammar.stacks[2])
+  return nothing
+end
+
+function logpdf(
+    grammar::ProductGrammar{C1, R1, G1, C2, R2, G2, <:BetaBinomial}, lhs, rule
+  ) where {C1, R1, G1, C2, R2, G2}
+
+  beta_bernoulli = grammar.params
+  @assert 1 <= arity(rule) <= 2
+  arity_logprob = logpdf(beta_bernoulli, arity(rule)-1)
+  *(
+    arity_logprob,
+    logpdf(grammar[1], lhs[1], rule[1]),
+    logpdf(grammar[2], lhs[2], rule[2]))
+end
+
+product_grammar = ProductGrammar(grammar, rhythm_grammar, BetaBinomial(1, 1, 1))
+
+# grammar
+# rhythm_grammar
+
+tune = treebank[30]
+chords = leaflabels(tune["tree"])
+durations = terminal_category.(normalize(Rational.(leaf_durations(tune))))
+terminalss = [[(c,d)] for (c, d) in zip(chords, durations)]
+scoring = WDS(product_grammar)
+@time chart = chartparse(product_grammar, scoring, terminalss)
+chart[1,length(terminalss)][(START, rhythm_start_category)]
+
+
