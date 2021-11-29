@@ -545,6 +545,22 @@ product_grammar = ProductGrammar(grammar, rhythm_grammar, BetaBinomial(1, 1, 1))
 # grammar
 # rhythm_grammar
 
+# function zip_tree(...)
+
+function zip_trees(t1, t2)
+  @assert length(t1.children) == length(t2.children)
+  if isleaf(t1)
+    Tree((t1.label, t2.label))
+  else
+    zipped_children = map(zip_trees, t1.children, t2.children)
+    Tree((t1.label, t2.label), zipped_children)
+  end
+end 
+
+for tune in treebank
+  tune["product_tree"] = zip_trees(tune["tree"], tune["rhythm_tree"])
+end
+
 tune = treebank[30]
 chords = leaflabels(tune["tree"])
 durations = terminal_category.(normalize(Rational.(leaf_durations(tune))))
@@ -553,4 +569,11 @@ scoring = WDS(product_grammar)
 @time chart = chartparse(product_grammar, scoring, terminalss)
 chart[1,length(terminalss)][(START, rhythm_start_category)]
 
+@time accs = calc_accs(grammar, treebank, START)
+sum(accs) / length(accs)
 
+@time accs = calc_accs(rhythm_grammar, treebank, rhythm_start_category, treekey="rhythm_tree")
+sum(accs) / length(accs)
+
+@time accs = calc_accs(product_grammar, treebank, (START, rhythm_start_category), treekey="product_tree")
+sum(accs) / length(accs)
