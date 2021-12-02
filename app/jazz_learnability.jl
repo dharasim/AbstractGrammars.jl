@@ -484,28 +484,6 @@ function getindex(grammar::ProductGrammar, i)
     BoundsError(grammar, i)
   end
 end
-# product_grammar
-# product_grammar isa AbstractGrammar{ProductRule{StdCategory{TPCC}, RhythmCategory}}
-
-# function foo(grammar::G) where {C,R <: AbstractRule{C},G <: AbstractGrammar{R}}
-#   println.([C, R, G])
-# end
-
-# foo(product_grammar)
-
-# function push_completions!(grammar::ProductGrammar, stack, category)
-#   push_completions!(grammar[1], grammar.stacks[1], category[1])
-#   push_completions!(grammar[2], grammar.stacks[2], category[2])
-  
-#   for app1 in grammar.stacks[1], app2 in grammar.stacks[2]
-#     app = App((app1.lhs, app2.lhs), ProductRule(app1.rule, app2.rule))
-#     push!(stack, app)
-#   end
-
-#   empty!(grammar.stacks[1])
-#   empty!(grammar.stacks[2])
-#   return nothing
-# end
 
 function push_completions!(grammar::ProductGrammar, stack, categories...)
   function unzip(xs)
@@ -540,13 +518,6 @@ function logpdf(
     logpdf(grammar[2], lhs[2], rule[2]))
 end
 
-product_grammar = ProductGrammar(grammar, rhythm_grammar, BetaBinomial(1, 1, 1))
-
-# grammar
-# rhythm_grammar
-
-# function zip_tree(...)
-
 function zip_trees(t1, t2)
   @assert length(t1.children) == length(t2.children)
   if isleaf(t1)
@@ -565,6 +536,8 @@ tune = treebank[30]
 chords = leaflabels(tune["tree"])
 durations = terminal_category.(normalize(Rational.(leaf_durations(tune))))
 terminalss = [[(c,d)] for (c, d) in zip(chords, durations)]
+
+product_grammar = ProductGrammar(grammar, rhythm_grammar, BetaBinomial(1, 1, 1))
 scoring = WDS(product_grammar)
 @time chart = chartparse(product_grammar, scoring, terminalss)
 chart[1,length(terminalss)][(START, rhythm_start_category)]
@@ -572,8 +545,238 @@ chart[1,length(terminalss)][(START, rhythm_start_category)]
 @time accs = calc_accs(grammar, treebank, START)
 sum(accs) / length(accs)
 
-@time accs = calc_accs(rhythm_grammar, treebank, rhythm_start_category, treekey="rhythm_tree")
+@time accs = let start = rhythm_start_category 
+  calc_accs(rhythm_grammar, treebank, start, treekey="rhythm_tree")
+end
 sum(accs) / length(accs)
 
-@time accs = calc_accs(product_grammar, treebank, (START, rhythm_start_category), treekey="product_tree")
+@time accs = let start = (START, rhythm_start_category)
+  calc_accs(product_grammar, treebank, start, treekey="product_tree")
+end
 sum(accs) / length(accs)
+
+
+
+# unsupervised learning: 
+# - calc expected rule counts, summed over all tunes
+# - to get the variational likelihood of the Dirichlet dists, map digamma over counts and normalize
+# - use predictive density for calc of best trees at the end
+
+
+import SpecialFunctions: digamma
+digamma(188383)
+
+
+################################################################################
+
+# ProbProgs.jl
+# 
+# Values:
+# - zero cost abstraction for evaluation of logpdfs 
+#   (achieved by type stability and using stack allocation where ever possible)
+# - Simple an intuitive model specification 
+#   (achieved by implementing Distributions.jl interface & using math notation)
+# - Thin abstraction layer with composable inference methods
+#   (so that it's easy to maintain and integrates well into the Julia ecosystem)
+#
+# Not prioritized:
+# - implementation of out-of-the-box inference methods
+#
+# Info:
+# - inspired by Pyro & Gen.jl
+# - using Lens (optics like in Haskell) for achieving type stability in trace 
+#   accesses and updates
+
+using Distributions
+using Random: AbstractRNG, default_rng
+using MacroTools: @expand, @capture, splitdef, combinedef, postwalk, prewalk, rmlines
+
+import Base: show, rand
+import Distributions: logpdf
+
+##############################
+### Probabilistic programs ###
+##############################
+
+struct ProbProg{C, F, A, KW}
+  construct::C
+  run::F
+  args::A
+  kwargs::KW
+end
+
+show(io::IO, ::ProbProg) = print(io, "ProbProg(...)")
+
+fromtrace(prog::ProbProg, trace) = fromtrace(prog.construct, trace)
+totrace(prog::ProbProg, x) = totrace(prog.construct, x)
+
+fromtrace(::Any, trace) = trace
+totrace(::Any, x) = x
+
+macro probprog(ex)
+  i = gensym() # generate unique symbol for the interpreter
+
+  # rewrite a single sample statement indicated by `~`
+  function rewrite_sample_expr(ex)
+    if @capture(ex, name_ ~ distribution_call_)
+      get_ex = :(trace -> trace.$name)
+      set_ex = :((trace, val) -> (trace..., $name = val))
+      :(($i, $name) = sample($i, $distribution_call, $get_ex, $set_ex))
+    else
+      ex
+    end
+  end
+
+  # dictionary representing the function definition in expression `ex`
+  def_dict = splitdef(ex)
+
+  # add interpreter as first argument
+  def_dict[:args] = [i, def_dict[:args]...]
+
+  # rewrite all sample statements indicated by `~`
+  def_dict[:body] = postwalk(rewrite_sample_expr, def_dict[:body])
+
+  # add interpreter to the original return expression
+  def_dict[:body].args[end] = 
+    if @capture(def_dict[:body].args[end], return r_ex_)
+      :((interpreter=$i, return_val=$r_ex))
+    else
+      :((interpreter=$i, return_val=$(def_dict[:body].args[end])))
+    end
+
+  esc(
+    quote
+      function $(def_dict[:name])(args...; kwargs...) 
+        run = let
+          # wrapped in a let statement to avoid name conflict
+          $(combinedef(def_dict))
+        end
+        ProbProg($(def_dict[:name]), run, args, kwargs)
+      end
+    end
+  )
+end
+
+########################################
+### iid distributed random variables ###
+########################################
+
+struct IID{D}
+  dist::D
+  n::Int
+  
+  function IID(dist::D, n) where D
+    @assert n > 0
+    new{D}(dist, n)
+  end
+end
+
+iid(dist, n) = IID(dist, n)
+logpdf(iid::IID, xs) = sum(logpdf(iid.dist, x) for x in xs)
+rand(iid::IID) = rand(default_rng(), iid)
+rand(rng::AbstractRNG, iid::IID) = [rand(rng, iid.dist) for _ in 1:iid.n]
+
+##############################################
+### Interpreters of probabilistic programs ###
+##############################################
+
+abstract type Interpreter end
+
+function interpret(prog::ProbProg, i=StdInterpreter()::Interpreter)
+  prog.run(i, prog.args...; prog.kwargs...)
+end
+
+struct StdInterpreter <: Interpreter end
+
+function sample(i::StdInterpreter, dist, get_obs, set_obs)
+  x = rand(dist)
+  return i, x
+end
+
+struct EvalTrace{T} <: Interpreter
+  logpdf::Float64
+  trace::T
+end
+
+EvalTrace(trace) = EvalTrace(0.0, trace)
+
+function addto_total_logpdf(i::EvalTrace, logpdf)
+  EvalTrace(i.logpdf + logpdf, i.trace)
+end
+
+function sample(i::EvalTrace, dist, get_obs, set_obs)
+  x = get_obs(i.trace)
+  i = addto_total_logpdf(i, logpdf(dist, x))
+  return i, x
+end
+
+function logpdf(model::ProbProg, x)
+  trace = totrace(model, x)
+  interpreter, _ = interpret(model, EvalTrace(0.0, trace))
+  interpreter.logpdf
+end
+
+struct RandTrace{R,T} <: Interpreter
+  rng::R
+  trace::T
+end
+
+RandTrace(rng::AbstractRNG) = RandTrace(rng, (;))
+RandTrace() = RandTrace(default_rng())
+
+function sample(i::RandTrace, dist, get_obs, set_obs)
+  x = rand(dist)
+  new_trace = set_obs(i.trace, x)
+  return RandTrace(i.rng, new_trace), x
+end
+
+rand(model::ProbProg) = rand(default_rng(), model)
+
+function rand(rng::AbstractRNG, model::ProbProg) 
+  fromtrace(model, interpret(model, RandTrace(rng)).interpreter.trace)
+end
+
+### tests
+
+@probprog function model(p)
+  heads ~ Bernoulli(p)
+  μ = heads ? 0 : 2
+  number ~ Normal(μ, 1)
+  (heads, number)
+end
+
+function fromtrace(::typeof(model), trace) 
+  sign(trace.number) * trace.heads * 100 + trace.number
+end
+
+function totrace(::typeof(model), x)
+  d, r = divrem(x, 100)
+  (heads = 1 == abs(d), number = r)
+end
+
+@time interpret(model(0.5)).return_val
+@time trace = interpret(model(0.2), RandTrace()).interpreter.trace
+@time interpret(model(0.2), EvalTrace(trace)).interpreter.logpdf
+
+m = model(0.3)
+x = rand(m)
+trace = totrace(m, x)
+@assert -Inf < logpdf(m, x) < 0
+@assert all(map(≈, trace, totrace(m, fromtrace(m, trace))))
+@assert logpdf(model(0.3), x) == +(
+  logpdf(Bernoulli(0.3), trace.heads),
+  logpdf(Normal(trace.heads ? 0 : 2, 1), trace.number))
+
+### test iid
+
+d = iid(Bernoulli(0.4), 5)
+@assert -Inf < logpdf(d, rand(d)) < 0
+
+@probprog function iid_model(a, b, n)
+  p ~ Beta(a, b)
+  coins ~ iid(model(p), n)
+  return
+end
+
+m = iid_model(3, 2, 100)
+@assert -Inf < logpdf(m, rand(m)) < 0
