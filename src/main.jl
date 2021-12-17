@@ -38,6 +38,16 @@ struct StdCategory{T}
   end
 end
 
+function show(io::IO, c::StdCategory)
+  str = @match c.tag begin
+    "terminal"    => "T($(c.val))"
+    "nonterminal" => "NT($(c.val))"
+    "start"       => "S()"
+    "default"     => "D()"
+  end
+  print(io, str)
+end
+
 isstart(c::StdCategory) = "start" ⊣ c
 isterminal(c::StdCategory) = "terminal" ⊣ c
 
@@ -83,6 +93,7 @@ struct App{C, R <: AbstractRule{C}}
   rule :: R
 end
 
+show(io::IO, app::App) = print(io::IO, "App($(app.lhs), $(app.rule))")
 apply(grammar, app::App) = apply(grammar, app.rule, app.lhs)
 
 using AbstractGrammars.AtMosts: AtMost, atmost2
@@ -99,10 +110,9 @@ StdRule(lhs, rhs...) = StdRule(lhs, atmost2(rhs...))
 apply(r::StdRule{C}, c::C) where C = r.lhs == c ? tuple(r.rhs...) : nothing
 arity(r::StdRule) = length(r.rhs)
 
-function show(io::IO, r::StdRule{C}) where C
-  print(io, "StdRule{$C}($(r.lhs) -->")
+function show(io::IO, r::StdRule)
+  print(io, "$(r.lhs) -->")
   foreach(c -> print(io, " $c"), r.rhs)
-  print(io, ")")
 end
 
 #########################

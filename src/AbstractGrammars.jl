@@ -37,10 +37,11 @@ dict2tree, tree2derivation, treelet2stdrule
 ###############
 
 import Distributions: logpdf
-import Base: zero, iszero, insert!, map, eltype
+import Base: zero, iszero, insert!, map, eltype, show
 
 using LogProbs
 using ShortStrings: ShortString31
+using MLStyle: @match
 
 #############
 ### Utils ###
@@ -71,7 +72,7 @@ normalize(xs) = xs ./ sum(xs)
 
 # include submodules
 include("AtMosts.jl")
-include("ConjugateModels.jl")
+# include("ConjugateModels.jl")
 
 # main module code
 include("main.jl")

@@ -5,9 +5,13 @@ import AbstractGrammars: default
 import Distributions: logpdf, BetaBinomial
 
 # imports without overloading
-using AbstractGrammars.ConjugateModels: DirCat, add_obs!
+# using AbstractGrammars.ConjugateModels: DirCat, add_obs!
+using Statistics: mean
+using SimpleProbabilisticPrograms
 using Pitches: parsespelledpitch, Pitch, SpelledIC, MidiIC, midipc, alteration, @p_str, tomidi
 using Underscores: @_
+using MLStyle: @match
+using ProgressMeter: @showprogress
 
 # named imports
 # import AbstractGrammars.Headed
@@ -23,6 +27,8 @@ default(::Type{Pitch{I}}) where I = Pitch(default(I))
 ##############
 ### Chords ###
 ##############
+
+import Base: show
 
 @enum ChordForm MAJ MAJ6 MAJ7 DOM MIN MIN6 MIN7 MINMAJ7 HDIM7 DIM7 SUS
 
@@ -47,6 +53,8 @@ struct Chord{R}
   root :: R
   form :: ChordForm
 end
+
+show(io::IO, chord::Chord) = print(io, chord.root, chordform_string(chord.form))
 
 function default(::Type{Chord{R}}) where R 
   Chord(default(R), default(ChordForm))
@@ -125,7 +133,6 @@ rules = Set([
 
 # probability model
 applicable_rules(all_rules, category) = filter(r -> r.lhs==category, all_rules)
-flat_dircat(xs) = DirCat(Dict(x => 1 for x in xs))
 prior_params() = Dict(
   nt => flat_dircat(applicable_rules(rules, nt)) for nt in [nts; START])
 
@@ -168,25 +175,17 @@ scoring = WDS(grammar) # weighted derivation scoring
 ### Test with treebank ###
 ##########################
 
-# using Distributed
-# using SharedArrays
-
-# addprocs(6)
-# workers()
-# @everywhere using AbstractGrammars
-
 function calc_accs(grammar, treebank, startsymbol; treekey="tree")
   scoring = BestDerivationScoring()
   accs = zeros(length(treebank))
   for i in eachindex(treebank)
-    print(i, ' ', treebank[i]["title"], ' ')
     tree = treebank[i][treekey]
     terminalss = [[c] for c in leaflabels(tree)]
     chart = chartparse(grammar, scoring, terminalss)
     apps = chart[1, length(terminalss)][startsymbol].apps
     derivation = [app.rule for app in apps]
     accs[i] = tree_similarity(tree, apply(derivation, startsymbol))
-    println(accs[i])
+    # println(i, ' ', treebank[i]["title"], ' ', accs[i])
   end
   return accs
 end
@@ -293,6 +292,14 @@ const RhythmCategory = StdCategory{Rational{Int}}
 struct RhythmRule <: AbstractRule{RhythmCategory}
   tag   :: Tag
   ratio :: Rational{Int}
+end
+
+function show(io::IO, r::RhythmRule)
+  @match r.tag begin
+    "start"       => print(io, "RhymStart()")
+    "termination" => print(io, "RhymTerm()")
+    "split"       => print(io, "RhymSplit($(r.ratio))")
+  end
 end
 
 const rhythm_start_category = start_category(Rational{Int})
@@ -435,6 +442,7 @@ function getindex(rule::ProductRule, i)
   end
 end
 
+show(io::IO, r::ProductRule) = print(io, "($(r[1]), $(r[2]))")
 arity(rule::ProductRule) = arity(rule[1])
 
 function apply(rule::ProductRule{C1,C2}, category::Tuple{C1,C2}) where {C1,C2}
@@ -532,15 +540,334 @@ for tune in treebank
   tune["product_tree"] = zip_trees(tune["tree"], tune["rhythm_tree"])
 end
 
-tune = treebank[30]
-chords = leaflabels(tune["tree"])
-durations = terminal_category.(normalize(Rational.(leaf_durations(tune))))
-terminalss = [[(c,d)] for (c, d) in zip(chords, durations)]
+product_sequence(tune) = leaflabels(tune["product_tree"])
 
-product_grammar = ProductGrammar(grammar, rhythm_grammar, BetaBinomial(1, 1, 1))
-scoring = WDS(product_grammar)
-@time chart = chartparse(product_grammar, scoring, terminalss)
-chart[1,length(terminalss)][(START, rhythm_start_category)]
+using DataStructures: counter
+using DataStructures: Accumulator
+import Base: *, +
+*(a::Accumulator, n::Number) = Accumulator(Dict(k => v*n for (k,v) in a.map))
+*(n::Number, a::Accumulator) = Accumulator(Dict(k => n*v for (k,v) in a.map))
++(a::Accumulator, n::Number) = Accumulator(Dict(k => v+n for (k,v) in a.map))
++(n::Number, a::Accumulator) = Accumulator(Dict(k => n+v for (k,v) in a.map))
+
+function most_frequent(a::Accumulator, n=10)
+  @_ collect(a.map) |>
+     sort!(__, by=kv->kv[2], rev=true) |>
+     first(__, n)
+end
+
+function estimate_rule_counts_single_sequence(
+    grammar, sequence, startsym; num_trees=length(sequence)^2
+  )
+  scoring = WDS(grammar, logvarpdf)
+  chart = chartparse(grammar, scoring, sequence)
+  forest = chart[1,length(sequence)][startsym]
+  return 1/num_trees * counter(sample_derivations(scoring, forest, num_trees))
+end
+
+function estimate_rule_counts(grammar, sequences, args...; kwargs...)
+  estimates_per_sequnece = map(sequences) do seq
+    estimate_rule_counts_single_sequence(grammar, seq, args...; kwargs...)
+  end
+  reduce(merge!, estimates_per_sequnece)
+end
+
+function variational_inference_step!(grammar, sequences, startsym, mk_prior)
+  rule_counts = estimate_rule_counts(grammar, sequences, startsym)
+  grammar.params = mk_prior()
+  @showprogress for (app, pscount) in rule_counts
+    add_obs!(rule_dist(grammar, app.lhs), app.rule, pscount)
+  end
+end
+
+using Random: AbstractRNG
+using Distributions: Beta, Geometric
+using LogExpFunctions: logaddexp
+using SpecialFunctions: logbeta, digamma
+import Base: rand
+import Distributions: logpdf
+import SimpleProbabilisticPrograms: logvarpdf, add_obs!
+
+mutable struct BetaGeometric
+  α :: Float64
+  β :: Float64
+end
+
+function rand(rng::AbstractRNG, dist::BetaGeometric)
+  p = rand(rng, Beta(dist.α, dist.β))
+  rand(rng, Geometric(p))
+end
+
+# https://www.itl.nist.gov/div898/software/dataplot/refman2/auxillar/bgepdf.htm
+function logpdf(dist::BetaGeometric, n)
+  logbeta(dist.α + 1, dist.β + n) - logbeta(dist.α, dist.β)
+end
+
+function logvarpdf(dist::BetaGeometric, n)
+  p = exp(digamma(dist.α) - logaddexp(digamma(dist.α), digamma(dist.β)))
+  logpdf(Geometric(p), 2)
+end
+
+function add_obs!(dist::BetaGeometric, n, pscount)
+  dist.α += pscount
+  dist.β += n*pscount
+  dist
+end
+
+
+
+function calkin_wilf_children(x)
+  a = numerator(x)
+  b = denominator(x)
+  return [a // (a+b), (a+b) // b]
+end
+
+using Memoize: @memoize
+@memoize function ratios_of_calkin_wilf_level(i)
+  if i == 0
+    [1//1]
+  else
+    mapreduce(calkin_wilf_children,append!,ratios_of_calkin_wilf_level(i-1))
+  end
+end
+
+@memoize function proper_ratios_of_calkin_wilf_level(i)
+  Set(filter(x->x<1, ratios_of_calkin_wilf_level(i)))
+end
+
+calkin_wilf_level(x::Rational) = stern_brocot_level(x)
+
+# algorithm from https://en.wikipedia.org/wiki/Stern%E2%80%93Brocot_tree
+function stern_brocot_path(x::Rational)
+  @assert 0 < x
+  path = Bool[]
+  l = 0//1 # lower bound
+  h = 1//0 # higher bound
+  while true
+    m = (numerator(l) + numerator(h)) // (denominator(l) + denominator(h))
+    if x < m
+      push!(path, false)
+      h = m
+    elseif x > m
+      push!(path, true)
+      l = m
+    else
+      break
+    end
+  end
+  return path
+end
+
+function stern_brocot_level(x::Rational)
+  @assert 0 < x
+  level = 0
+  l = 0//1 # lower bound
+  h = 1//0 # higher bound
+  while true
+    m = (numerator(l) + numerator(h)) // (denominator(l) + denominator(h))
+    if x < m
+      level += 1
+      h = m
+    elseif x > m
+      level += 1
+      l = m
+    else
+      break
+    end
+  end
+  return level
+end
+
+
+
+
+
+@probprog function calkin_wilf_product_model(params, nt)
+  harmony_nt, rhythm_nt = nt
+  harmony_rule ~ params.harmony_cond[harmony_nt]
+  if "start" ⊣ rhythm_nt
+    rhythm_rule ~ Dirac(rhythm_start_rule)
+  elseif arity(harmony_rule) == 1
+    rhythm_rule ~ Dirac(rhythm_termination)
+  else
+    levelm1 ~ params.level_dist
+    level = levelm1 + 1
+    level_ratios = proper_ratios_of_calkin_wilf_level(level)
+    ratio ~ UniformCategorical(level_ratios)
+    rhythm_rule ~ Dirac(rhythm_split_rule(ratio))
+  end
+  return
+end
+
+import SimpleProbabilisticPrograms: fromtrace, totrace
+function fromtrace(::typeof(calkin_wilf_product_model), trace)
+  ProductRule(trace.harmony_rule, trace.rhythm_rule)
+end
+function totrace(::typeof(calkin_wilf_product_model), rule)
+  harmony_rule = rule[1]
+  rhythm_rule  = rule[2]
+  if rhythm_rule in (rhythm_start_rule, rhythm_termination)
+    (; harmony_rule, rhythm_rule) # named tuple shorthand notation
+  else
+    ratio = rule[2].ratio
+    levelm1 = calkin_wilf_level(ratio) - 1
+    (; harmony_rule, levelm1, ratio, rhythm_rule)
+  end
+end
+
+function calkin_wilf_product_prior()
+  harmony_dist(nt) = flat_dircat(applicable_rules(rules, nt))
+  (harmony_cond = Dict(nt => harmony_dist(nt) for nt in [nts; START]),
+   level_dist  = BetaGeometric(1, 10_000_000))
+end
+
+params = calkin_wilf_product_prior()
+nt = (nts[31], nonterminal_category(1//2))
+model = calkin_wilf_product_model(params, nt)
+rule = rand(model)
+logpdf(model, rule)
+
+
+
+@probprog function product_rule_model(params, nt)
+  harmony_nt, rhythm_nt = nt
+  harmony_rule ~ params.harmony_cond[harmony_nt]
+  if "start" ⊣ rhythm_nt
+    rhythm_rule ~ Dirac(rhythm_start_rule)
+  elseif arity(harmony_rule) == 1
+    rhythm_rule ~ Dirac(rhythm_termination)
+  else
+    rhythm_rule ~ params.rhythm_dist
+  end
+  return
+end
+
+import SimpleProbabilisticPrograms: fromtrace, totrace
+fromtrace(::typeof(product_rule_model), trace) = ProductRule(trace...)
+totrace(::typeof(product_rule_model), rule) = 
+  (harmony_rule=rule[1], rhythm_rule=rule[2])
+
+function product_rule_prior()
+  harmony_dist(nt) = flat_dircat(applicable_rules(rules, nt))
+  (harmony_cond = Dict(nt => harmony_dist(nt) for nt in [nts; START]),
+   rhythm_dist  = flat_dircat(collect(split_rules)))
+end
+
+logpdf(grammar::ProductGrammar, lhs, rule) = logpdf(rule_dist(grammar, lhs), rule)
+logvarpdf(grammar::ProductGrammar, lhs, rule) = logvarpdf(rule_dist(grammar, lhs), rule)
+
+function calkin_wilf_sequence(max_level)
+  n = sum(2^l for l in 0:max_level)
+  seq = zeros(Rational{Int}, n)
+  seq[1] = 1
+  for i in 2:n
+    seq[i] = 1 // (2*floor(seq[i-1]) - seq[i-1] + 1)
+  end
+  return seq
+end
+
+using Random: randperm, default_rng
+# k-fold cross validation for n data points
+function cross_validation_index_split(num_folds, num_total, rng=default_rng())
+  num_perfold = ceil(Int, num_total/num_folds)
+  num_lastfold = num_total - (num_folds-1) * num_perfold
+  fold_lenghts = [fill(num_perfold, num_folds-1); num_lastfold]
+  fold_ends = accumulate(+, fold_lenghts)
+  fold_starts = fold_ends - fold_lenghts .+ 1
+  shuffled_idxs = randperm(rng, num_total)
+  test_indices = [shuffled_idxs[i:j] for (i,j) in zip(fold_starts,fold_ends)]
+  train_indices = [setdiff(1:num_total, idxs) for idxs in test_indices]
+  return collect(zip(test_indices, train_indices))
+end
+
+harmony_grammar = StdGrammar([START], rules, nothing)
+
+split_ratios = filter(x->x<1, calkin_wilf_sequence(12))
+split_rules = Set(rhythm_split_rule.(split_ratios))
+rhythm_rules = union(split_rules, [rhythm_start_rule, rhythm_termination])
+rhythm_grammar = RhythmGrammar(rhythm_rules, nothing)
+
+prod_seqs = product_sequence.(treebank)
+start = (START, rhythm_start_category)
+
+
+epochs = 2
+n = 150
+k = 10
+accs = zeros(epochs, n)
+test_train_idx_pairs = cross_validation_index_split(k, n)
+@showprogress for (test_idxs, train_idxs) in test_train_idx_pairs
+  g = ProductGrammar(harmony_grammar, rhythm_grammar, product_rule_prior())
+  for e in 1:epochs
+    variational_inference_step!(
+      g, prod_seqs[train_idxs], start, product_rule_prior)
+    accs[e, test_idxs] = calc_accs(
+      g, treebank[test_idxs], start,treekey="product_tree")
+    println("mean acc: ", sum(accs[e, test_idxs]) / length(accs[e, test_idxs]))
+  end
+end
+accs[end,:] |> mean
+
+treebank_split_ratios = mapreduce(append!, treebank) do tune
+  @_ tree2derivation(treelet2rhythmrule, tune["rhythm_tree"]) |>
+     filter("split" ⊣ _, __) |>
+     map(_.ratio, __)
+end
+treebank_split_ratio_counts = 
+  @_ counter(treebank_split_ratios) |>
+     collect |>
+     sort(__, by=_[2], rev=true)
+foreach(println, first(treebank_split_ratio_counts, 20))
+
+rule_dist(g::ProductGrammar, lhs) = product_rule_model(g.params, lhs)
+g = ProductGrammar(harmony_grammar, rhythm_grammar, product_rule_prior())
+@time for e in 1:2
+  variational_inference_step!(
+    g, prod_seqs[1:150], start, product_rule_prior)
+  println(mean(calc_accs(
+    g, treebank[1:150], start,treekey="product_tree")))
+end
+
+@time apps = mapreduce(append!, prod_seqs) do seq
+  chart = chartparse(g, BestDerivationScoring(), seq)
+  chart[1, length(seq)][start].apps
+end
+predicted_split_ratio_counts = 
+  @_ apps |> 
+     map(_.rule[2], __) |> 
+     filter("split" ⊣ _, __) |>
+     map(_.ratio, __) |>
+     counter |>
+     collect |>
+     sort(__, by=_[2], rev=true)
+foreach(println, first(predicted_split_ratio_counts, 20))
+
+rule_dist(g::ProductGrammar, lhs) = calkin_wilf_product_model(g.params, lhs)
+g = ProductGrammar(harmony_grammar, rhythm_grammar, calkin_wilf_product_prior())
+@time for e in 1:4
+  variational_inference_step!(
+    g, prod_seqs[1:150], start, calkin_wilf_product_prior)
+  println(mean(calc_accs(
+    g, treebank[1:150], start,treekey="product_tree")))
+end
+
+g.params.level_dist
+
+@time apps = mapreduce(append!, prod_seqs) do seq
+  chart = chartparse(g, BestDerivationScoring(), seq)
+  chart[1, length(seq)][start].apps
+end
+predicted_split_ratio_counts = 
+  @_ apps |> 
+     map(_.rule[2], __) |> 
+     filter("split" ⊣ _, __) |>
+     map(_.ratio, __) |>
+     counter |>
+     collect |>
+     sort(__, by=_[2], rev=true)
+foreach(println, first(predicted_split_ratio_counts, 20))
+
+
 
 @time accs = calc_accs(grammar, treebank, START)
 sum(accs) / length(accs)
@@ -557,226 +884,5 @@ sum(accs) / length(accs)
 
 
 
-# unsupervised learning: 
-# - calc expected rule counts, summed over all tunes
-# - to get the variational likelihood of the Dirichlet dists, map digamma over counts and normalize
-# - use predictive density for calc of best trees at the end
 
 
-import SpecialFunctions: digamma
-digamma(188383)
-
-
-################################################################################
-
-# ProbProgs.jl
-# 
-# Values:
-# - zero cost abstraction for evaluation of logpdfs 
-#   (achieved by type stability and using stack allocation where ever possible)
-# - Simple an intuitive model specification 
-#   (achieved by implementing Distributions.jl interface & using math notation)
-# - Thin abstraction layer with composable inference methods
-#   (so that it's easy to maintain and integrates well into the Julia ecosystem)
-#
-# Not prioritized:
-# - implementation of out-of-the-box inference methods
-#
-# Info:
-# - inspired by Pyro & Gen.jl
-# - using Lens (optics like in Haskell) for achieving type stability in trace 
-#   accesses and updates
-
-using Distributions
-using Random: AbstractRNG, default_rng
-using MacroTools: @expand, @capture, splitdef, combinedef, postwalk, prewalk, rmlines
-
-import Base: show, rand
-import Distributions: logpdf
-
-##############################
-### Probabilistic programs ###
-##############################
-
-struct ProbProg{C, F, A, KW}
-  construct::C
-  run::F
-  args::A
-  kwargs::KW
-end
-
-show(io::IO, ::ProbProg) = print(io, "ProbProg(...)")
-
-fromtrace(prog::ProbProg, trace) = fromtrace(prog.construct, trace)
-totrace(prog::ProbProg, x) = totrace(prog.construct, x)
-
-fromtrace(::Any, trace) = trace
-totrace(::Any, x) = x
-
-macro probprog(ex)
-  i = gensym() # generate unique symbol for the interpreter
-
-  # rewrite a single sample statement indicated by `~`
-  function rewrite_sample_expr(ex)
-    if @capture(ex, name_ ~ distribution_call_)
-      get_ex = :(trace -> trace.$name)
-      set_ex = :((trace, val) -> (trace..., $name = val))
-      :(($i, $name) = sample($i, $distribution_call, $get_ex, $set_ex))
-    else
-      ex
-    end
-  end
-
-  # dictionary representing the function definition in expression `ex`
-  def_dict = splitdef(ex)
-
-  # add interpreter as first argument
-  def_dict[:args] = [i, def_dict[:args]...]
-
-  # rewrite all sample statements indicated by `~`
-  def_dict[:body] = postwalk(rewrite_sample_expr, def_dict[:body])
-
-  # add interpreter to the original return expression
-  def_dict[:body].args[end] = 
-    if @capture(def_dict[:body].args[end], return r_ex_)
-      :((interpreter=$i, return_val=$r_ex))
-    else
-      :((interpreter=$i, return_val=$(def_dict[:body].args[end])))
-    end
-
-  esc(
-    quote
-      function $(def_dict[:name])(args...; kwargs...) 
-        run = let
-          # wrapped in a let statement to avoid name conflict
-          $(combinedef(def_dict))
-        end
-        ProbProg($(def_dict[:name]), run, args, kwargs)
-      end
-    end
-  )
-end
-
-########################################
-### iid distributed random variables ###
-########################################
-
-struct IID{D}
-  dist::D
-  n::Int
-  
-  function IID(dist::D, n) where D
-    @assert n > 0
-    new{D}(dist, n)
-  end
-end
-
-iid(dist, n) = IID(dist, n)
-logpdf(iid::IID, xs) = sum(logpdf(iid.dist, x) for x in xs)
-rand(iid::IID) = rand(default_rng(), iid)
-rand(rng::AbstractRNG, iid::IID) = [rand(rng, iid.dist) for _ in 1:iid.n]
-
-##############################################
-### Interpreters of probabilistic programs ###
-##############################################
-
-abstract type Interpreter end
-
-function interpret(prog::ProbProg, i=StdInterpreter()::Interpreter)
-  prog.run(i, prog.args...; prog.kwargs...)
-end
-
-struct StdInterpreter <: Interpreter end
-
-function sample(i::StdInterpreter, dist, get_obs, set_obs)
-  x = rand(dist)
-  return i, x
-end
-
-struct EvalTrace{T} <: Interpreter
-  logpdf::Float64
-  trace::T
-end
-
-EvalTrace(trace) = EvalTrace(0.0, trace)
-
-function addto_total_logpdf(i::EvalTrace, logpdf)
-  EvalTrace(i.logpdf + logpdf, i.trace)
-end
-
-function sample(i::EvalTrace, dist, get_obs, set_obs)
-  x = get_obs(i.trace)
-  i = addto_total_logpdf(i, logpdf(dist, x))
-  return i, x
-end
-
-function logpdf(model::ProbProg, x)
-  trace = totrace(model, x)
-  interpreter, _ = interpret(model, EvalTrace(0.0, trace))
-  interpreter.logpdf
-end
-
-struct RandTrace{R,T} <: Interpreter
-  rng::R
-  trace::T
-end
-
-RandTrace(rng::AbstractRNG) = RandTrace(rng, (;))
-RandTrace() = RandTrace(default_rng())
-
-function sample(i::RandTrace, dist, get_obs, set_obs)
-  x = rand(dist)
-  new_trace = set_obs(i.trace, x)
-  return RandTrace(i.rng, new_trace), x
-end
-
-rand(model::ProbProg) = rand(default_rng(), model)
-
-function rand(rng::AbstractRNG, model::ProbProg) 
-  fromtrace(model, interpret(model, RandTrace(rng)).interpreter.trace)
-end
-
-### tests
-
-@probprog function model(p)
-  heads ~ Bernoulli(p)
-  μ = heads ? 0 : 2
-  number ~ Normal(μ, 1)
-  (heads, number)
-end
-
-function fromtrace(::typeof(model), trace) 
-  sign(trace.number) * trace.heads * 100 + trace.number
-end
-
-function totrace(::typeof(model), x)
-  d, r = divrem(x, 100)
-  (heads = 1 == abs(d), number = r)
-end
-
-@time interpret(model(0.5)).return_val
-@time trace = interpret(model(0.2), RandTrace()).interpreter.trace
-@time interpret(model(0.2), EvalTrace(trace)).interpreter.logpdf
-
-m = model(0.3)
-x = rand(m)
-trace = totrace(m, x)
-@assert -Inf < logpdf(m, x) < 0
-@assert all(map(≈, trace, totrace(m, fromtrace(m, trace))))
-@assert logpdf(model(0.3), x) == +(
-  logpdf(Bernoulli(0.3), trace.heads),
-  logpdf(Normal(trace.heads ? 0 : 2, 1), trace.number))
-
-### test iid
-
-d = iid(Bernoulli(0.4), 5)
-@assert -Inf < logpdf(d, rand(d)) < 0
-
-@probprog function iid_model(a, b, n)
-  p ~ Beta(a, b)
-  coins ~ iid(model(p), n)
-  return
-end
-
-m = iid_model(3, 2, 100)
-@assert -Inf < logpdf(m, rand(m)) < 0
