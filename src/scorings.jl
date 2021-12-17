@@ -121,13 +121,14 @@ zero(::Type{ScoredFreeEntry{S,T}}) where {S,T} = ScoredFreeEntry(S, T)
 iszero(x::ScoredFreeEntry) = x.tag == ZERO
 
 # Weighted Derivation Scoring (WDS)
-struct WDS{S,T} <: Scoring
-  store :: Vector{ScoredFreeEntry{S,T}}
+struct WDS{S,T,L} <: Scoring
+  store  :: Vector{ScoredFreeEntry{S,T}}
+  logpdf :: L
 end
 
-function WDS(::G) where
+function WDS(::G, logpdf=logpdf) where
   {C, R <: AbstractRule{C}, G <: AbstractGrammar{R}}
-  WDS(ScoredFreeEntry{LogProb, App{C, R}}[])
+  WDS(ScoredFreeEntry{LogProb, App{C, R}}[], logpdf)
 end
 
 score_type(::Type{<:AbstractGrammar}, ::Type{<:WDS{S,T}}) where {S, T} =
@@ -135,7 +136,7 @@ score_type(::Type{<:AbstractGrammar}, ::Type{<:WDS{S,T}}) where {S, T} =
 ruleapp_score(s::WDS, grammar, lhs, rule) = 
   ScoredFreeEntry(
     s.store, 
-    LogProb(logpdf(grammar, lhs, rule), islog=true), 
+    LogProb(s.logpdf(grammar, lhs, rule), islog=true), 
     App(lhs, rule))
 
 function add_scores(s::WDS, x, y)
@@ -165,7 +166,8 @@ function sample_derivation!(vals, s::WDS, x::ScoredFreeEntry{S,T}) where {S,T}
   if VAL  ⊣ x 
     push!(vals, x.value)
   elseif ADD ⊣ x
-    index = rand(S) < s.store[x.leftIndex].score / x.score ? x.leftIndex : x.rightIndex
+    goleft = rand(S) < s.store[x.leftIndex].score / x.score
+    index = goleft ? x.leftIndex : x.rightIndex
     sample_derivation!(vals, s, s.store[index])
   elseif MUL ⊣ x
     sample_derivation!(vals, s, s.store[x.leftIndex])
