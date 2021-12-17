@@ -15,7 +15,15 @@ struct ScoredCategory{C,S}
     score::S
 end
 
-function chartparse(grammar::G, scoring, terminalss) where {C,R <: AbstractRule{C},G <: AbstractGrammar{R}}
+function chartparse(grammar, scoring, terminals)
+    terminalss = [[t] for t in terminals]
+    chartparse(grammar, scoring, terminalss)
+end
+
+function chartparse(
+        grammar::G, scoring, terminalss::Vector{Vector{C}}
+    ) where {C,R <: AbstractRule{C},G <: AbstractGrammar{R}}
+
     n = length(terminalss) # sequence length
     S = score_type(grammar, scoring)
     chart = empty_chart(C, S, n)
