@@ -8,13 +8,11 @@ begin
   using Pitches: Pitches
 
   # imports for overloading
-  # import Base: *, +
   # import AbstractGrammars: default
-  # import Distributions: logpdf
-  import Distributions: Geometric
+  import AbstractGrammars: arity, apply, push_completions!
 
   # imports without overloading
-  # using DataStructures: counter, Accumulator
+  using Distributions: Geometric
   using DataStructures: counter
   using Statistics: mean
   using Underscores: @_
@@ -69,19 +67,19 @@ function calc_accs(
   end
 end
 
-using Random: randperm, default_rng
-# k-fold cross validation for n data points
-function cross_validation_index_split(num_folds, num_total, rng=default_rng())
-  num_perfold = ceil(Int, num_total/num_folds)
-  num_lastfold = num_total - (num_folds-1) * num_perfold
-  fold_lenghts = [fill(num_perfold, num_folds-1); num_lastfold]
-  fold_ends = accumulate(+, fold_lenghts)
-  fold_starts = fold_ends - fold_lenghts .+ 1
-  shuffled_idxs = randperm(rng, num_total)
-  test_indices = [shuffled_idxs[i:j] for (i,j) in zip(fold_starts,fold_ends)]
-  train_indices = [setdiff(1:num_total, idxs) for idxs in test_indices]
-  return collect(zip(test_indices, train_indices))
-end
+# using Random: randperm, default_rng
+# # k-fold cross validation for n data points
+# function cross_validation_index_split(num_folds, num_total, rng=default_rng())
+#   num_perfold = ceil(Int, num_total/num_folds)
+#   num_lastfold = num_total - (num_folds-1) * num_perfold
+#   fold_lenghts = [fill(num_perfold, num_folds-1); num_lastfold]
+#   fold_ends = accumulate(+, fold_lenghts)
+#   fold_starts = fold_ends - fold_lenghts .+ 1
+#   shuffled_idxs = randperm(rng, num_total)
+#   test_indices = [shuffled_idxs[i:j] for (i,j) in zip(fold_starts,fold_ends)]
+#   train_indices = [setdiff(1:num_total, idxs) for idxs in test_indices]
+#   return collect(zip(test_indices, train_indices))
+# end
 
 #####################
 ### Load Treebank ###
@@ -155,13 +153,147 @@ end
 # forest = chart[1, length(terminals)][NT(terminals[end])]
 # @time sample_derivations(scoring, forest, 1) .|> (app -> arity(app.rule))
 
+###########################################
+### Transpositionally invariant grammar ###
+###########################################
+
+using Pitches: SpelledIC
+
+const all_intervals = SpelledIC.(-12:12)
+const nonzero_intervals = [SpelledIC.(-12:-1); SpelledIC.(1:12)]
+const all_forms = instances(ChordForm)
+const transp_ruletags = Tag[
+  "termination", "duplication", "rightheaded", "leftheaded"]
+
+struct TranspRule <: Rule{StdCategory{TPCC}}
+  tag      :: Tag
+  interval :: SpelledIC # interval from left to right child
+  form     :: ChordForm # form of the dependent on the rhs
+end
+
+TranspTerm() = TranspRule("termination", default(SpelledIC), default(ChordForm))
+TranspDpl() = TranspRule("duplication", default(SpelledIC), default(ChordForm))
+TranspRH(interval, form) = TranspRule("rightheaded", interval, form)
+TranspLH(interval, form) = TranspRule("leftheaded", interval, form)
+
+import Base: show
+function show(io::IO, r::TranspRule)
+  if "termination" ⊣ r
+    print(io, "TranspTerm()")
+  elseif "duplication" ⊣ r
+    print(io, "TranspDpl()")
+  elseif "rightheaded" ⊣ r
+    print(io, "TranspRH($(r.interval), $(r.form))")
+  elseif "leftheaded" ⊣ r
+    print(io, "TranspLH($(r.interval), $(r.form))")
+  end
+end
+
+arity(r::TranspRule) = "termination" ⊣ r ? 1 : 2
+
+function apply(r::TranspRule, c::StdCategory{TPCC})
+  if isterminal(c)
+    nothing
+  else
+    if "termination" ⊣ r
+      tuple(T(c))
+    elseif "duplication" ⊣ r
+      tuple(c, c)
+    elseif "rightheaded" ⊣ r
+      d = NT(Chord(c.val.root - r.interval, r.form))
+      tuple(d, c)
+    elseif "leftheaded" ⊣ r
+      d = NT(Chord(c.val.root + r.interval, r.form))
+      tuple(c, d)
+    end
+  end
+end
+
+# # tests
+# c = NT(parse_chord("Dm7"))
+# r = TranspTerm()
+# @assert apply(r, c) == (T(parse_chord("Dm7")),)
+# r = TranspDpl()
+# @assert apply(r, c) == (NT(parse_chord("Dm7")), NT(parse_chord("Dm7")))
+# r = TranspLH(SpelledIC(2), all_forms[2])
+# @assert apply(r, c) == (NT(parse_chord("Dm7")), NT(parse_chord("E6")))
+# r = TranspRH(SpelledIC(2), all_forms[2])
+# @assert apply(r, c) == (NT(parse_chord("C6")), NT(parse_chord("Dm7")))
+
+isheaded(r::TranspRule) = r.tag in ("rightheaded", "leftheaded")
+
+# termination and duplication are always included
+struct TranspGrammar <: Grammar{TranspRule}
+  headedrules :: Set{TranspRule}
+  function TranspGrammar(headedrules)
+    @assert all(isheaded(r) for r in headedrules)
+    new(Set(headedrules))
+  end
+end
+
+function push_completions!(::TranspGrammar, stack, c)
+  if isterminal(c)
+    push!(stack, App(NT(c), TranspTerm()))
+  end
+end
+
+function push_completions!(grammar::TranspGrammar, stack, c1, c2)
+  if isnonterminal(c1) && isnonterminal(c2)
+    if c1 == c2
+      push!(stack, App(c1, TranspDpl()))
+    else
+      i = c2.val.root - c1.val.root
+      leftheaded_rule = TranspLH(i, c2.val.form)
+      if leftheaded_rule in grammar.headedrules
+        push!(stack, App(c1, leftheaded_rule))
+      end
+      rightheaded_rule = TranspRH(i, c1.val.form)
+      if rightheaded_rule in grammar.headedrules
+        push!(stack, App(c2, rightheaded_rule))
+      end
+    end
+  end
+end
+
+function mk_transp_grammar(rulekinds=[:leftheaded, :rightheaded])
+  headedrules = TranspRule[]
+  if :leftheaded in rulekinds
+    leftheaded_rules = [
+      TranspLH(i, f) 
+      for i in all_intervals 
+      for f in all_forms
+      if !iszero(i)
+    ]
+    append!(headedrules, leftheaded_rules)
+  end
+  if :rightheaded in rulekinds
+    rightheaded_rules = [
+      TranspRH(i, f) 
+      for i in all_intervals 
+      for f in all_forms
+      if !iszero(i)
+    ]
+    append!(headedrules, rightheaded_rules)
+  end
+  TranspGrammar(headedrules)
+end
+
+tg = mk_transp_grammar([:rightheaded])
+hg = mk_harmony_grammar([:duplication, :rightheaded])
+scoring = CountScoring()
+seq = leaflabels(treebank[30]["harmony_tree"])
+@assert ==(
+  chartparse(tg, scoring, seq)[1, end][NT(seq[end])],
+  chartparse(hg, scoring, seq)[1, end][NT(seq[end])]
+)
+
+# next step: implement distribution for transpositionally invariant rules
+
 ######################
 ### Rhythm Grammar ###
 ######################
 
 begin
-  import AbstractGrammars: arity, apply, push_completions!
-
   const RhythmCategory = StdCategory{Rational{Int}}
 
   # unary termination rules and binary split rules
