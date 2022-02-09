@@ -5,6 +5,7 @@
 module AtMosts
 
 using ..AbstractGrammars: default
+# default(::Type{Char}) = 'a'
 
 import Base: length, getindex, iterate, eltype, show, keys
 

@@ -22,16 +22,16 @@ end
 
 function chartparse(
         grammar::G, scoring, terminalss::Vector{Vector{C}}
-    ) where {C,R <: AbstractRule{C},G <: AbstractGrammar{R}}
+    ) where {C, R <: Rule{C}, G <: Grammar{R}}
 
     n = length(terminalss) # sequence length
-    S = score_type(grammar, scoring)
+    S = scoretype(scoring, grammar)
     chart = empty_chart(C, S, n)
     stack = Vector{App{C,R}}() # channel for communicating completions
     # using a single stack is much more efficient than constructing multiple arrays
     stack_unary = Vector{ScoredCategory{C,S}}()
 
-    score(app) = ruleapp_score(scoring, grammar, app.lhs, app.rule)
+    score(app) = ruleapp_score(scoring, app.lhs, app.rule)
 
     for (i, terminals) in enumerate(terminalss)
         for terminal in terminals

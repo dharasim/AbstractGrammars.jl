@@ -9,43 +9,60 @@ export
 Tag, ⊣, @tag_str, normalize, default,
 
 # Category interface
-AbstractCategory, isstart, isnonterminal, isterminal,
-StdCategory, start_category, terminal_category, nonterminal_category,
+isnonterminal, isterminal, 
+StdCategory, NT, T,
 
 # Rule interface
-AbstractRule, arity, apply, App,
+Rule, arity, apply, App,
 StdRule, -->,
+ProductRule,
 
 # Grammar interface
-AbstractGrammar, push_completions!,
-StdGrammar,
+Grammar, push_completions!,
+StdGrammar, ProductGrammar,
+
+# Variational inference
+estimate_rule_counts, runvi,
 
 # Scorings
 InsideScoring, CountScoring, BooleanScoring, BestDerivationScoring,
 WDS, sample_derivations,
 
+# Rule distributions
+DirCatRuleDist, symdircat_ruledist, ConstDirCatRuleDist,
+observe_app!, observe_tree!, observe_trees!,
+
 # Chart parsing
 Chart, chartparse,
 
 # Trees
-Tree, labels, innerlabels, leaflabels, tree_similarity, isleaf, 
+Tree, labels, innerlabels, leaflabels, tree_similarity, isleaf, zip_trees,
 Treelet, treelets, 
-dict2tree, tree2derivation, treelet2stdrule
+dict2tree, tree2derivation, tree2apps, treelet2stdrule
 
 ###############
 ### Imports ###
 ###############
 
-import Distributions: logpdf
-import Base: zero, iszero, insert!, map, eltype, show
+import Distributions: logpdf, insupport
+import Base: zero, iszero, insert!, map, eltype, show, +, *
 
+using SimpleProbabilisticPrograms: BetaBinomial, add_obs!, DirCat, symdircat, logvarpdf
 using LogProbs
 using ShortStrings: ShortString31
 using MLStyle: @match
+using Setfield: @set
+using ProgressMeter: Progress, progress_map
+using DataStructures: counter, Accumulator
 
 #############
 ### Utils ###
 #############
+
+*(a::Accumulator, n::Number) = Accumulator(Dict(k => v*n for (k,v) in a.map))
+*(n::Number, a::Accumulator) = Accumulator(Dict(k => n*v for (k,v) in a.map))
++(a::Accumulator, n::Number) = Accumulator(Dict(k => v+n for (k,v) in a.map))
++(n::Number, a::Accumulator) = Accumulator(Dict(k => n+v for (k,v) in a.map))
 
 # check for the tag of an object
 ⊣(tag, x) = x.tag == tag
@@ -72,7 +89,7 @@ normalize(xs) = xs ./ sum(xs)
 
 # include submodules
 include("AtMosts.jl")
-# include("ConjugateModels.jl")
+using .AtMosts: AtMost, atmost2
 
 # main module code
 include("main.jl")

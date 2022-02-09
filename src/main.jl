@@ -1,94 +1,22 @@
-##########################
-### Category interface ###
-##########################
-
-# abstract type AbstractCategory end
-
-# """
-#     isstart(category::AbstractCategory) ::Bool
-# """
-# function isstart end
-
-# """
-#     isterminal(category::AbstractCategory) ::Bool
-# """
-# function isterminal end
-
-# """
-#     isnonterminal(category::AbstractCategory) ::Bool
-
-# The default implementation is: `isnonterminal(c) = !isterminal(c)`
-# """
-# function isnonterminal(category::AbstractCategory)
-#   !isterminal(category)
-# end
-
-# possible tags: start, terminal, nonterminal, default
-struct StdCategory{T}
-  tag :: Tag
-  val :: T
-
-  function StdCategory(tag, val::T) where T 
-    @assert tag in ("terminal", "nonterminal")
-    new{T}(tag, val)
-  end
-  function StdCategory(tag, T::Type) 
-    @assert tag in ("start", "default")
-    new{T}(tag, default(T))
-  end
-end
-
-function show(io::IO, c::StdCategory)
-  str = @match c.tag begin
-    "terminal"    => "T($(c.val))"
-    "nonterminal" => "NT($(c.val))"
-    "start"       => "S()"
-    "default"     => "D()"
-  end
-  print(io, str)
-end
-
-isstart(c::StdCategory) = "start" ⊣ c
-isterminal(c::StdCategory) = "terminal" ⊣ c
-
-default(::Type{StdCategory{T}}) where T = StdCategory("default", T)
-
-start_category(T::Type) = StdCategory("start", T)
-terminal_category(val) = StdCategory("terminal", val)
-nonterminal_category(val) = StdCategory("nonterminal", val)
-
-terminal_category(c::StdCategory) = StdCategory("terminal", c.val)
-nonterminal_category(c::StdCategory) = StdCategory("nonterminal", c.val)
+# Type variables
+# C ... category type
+# R ... rule type
+# A ... rule application type
+# S ... score type
 
 ######################
-### Rule interface ###
+### Abstract types ###
 ######################
 
-abstract type AbstractRule{Category} end
-abstract type AbstractGrammar{Rule<:AbstractRule} end
+abstract type Rule{C} end
+abstract type Grammar{R<:Rule} end
+abstract type Scoring end
 
-"""
-    arity(rule::AbstractRule) ::Int
+#########################
+### Rule applications ###
+#########################
 
-Rules have constant length of their right-hand sides and 
-`arity(rule)` returns this length.
-"""
-function arity end
-
-"""
-    apply(grammar, rule, category)
-
-Apply `rule` to `category`, potentially using information from `grammar`.
-Returns `nothing` if `rule` is not applicable to `category`.
-Default implementation doesn't use `grammar`'s information and calls
-`apply(rule, category)`.
-"""
-function apply(grammar, rule, category) 
-  apply(rule, category)
-end
-
-# Rule applications
-struct App{C, R <: AbstractRule{C}}
+struct App{C, R<:Rule{C}}
   lhs  :: C
   rule :: R
 end
@@ -96,9 +24,95 @@ end
 show(io::IO, app::App) = print(io::IO, "App($(app.lhs), $(app.rule))")
 apply(grammar, app::App) = apply(grammar, app.rule, app.lhs)
 
-using AbstractGrammars.AtMosts: AtMost, atmost2
+############################
+### Type-level functions ###
+############################
 
-struct StdRule{C} <: AbstractRule{C}
+catytype(x) = categorytype(typeof(x))
+catytype(R::Type{<:Rule{C}}) where {C} = C
+catytype(G::Type{<:Grammar{R}}) where {R} = categorytype(R)
+catytype(A::Type{App{C, R}}) where {C,R} = C
+
+ruletype(x) = ruletype(typeof(x))
+ruletype(R::Type{<:Rule}) = R
+ruletype(G::Type{<:Grammar{R}}) where {R} = R
+ruletype(A::Type{App{C, R}}) where {C,R} = R
+
+apptype(x) = apptype(ruletype(x))
+apptype(T::Type) = App{categorytype(T), ruletype(T)}
+
+##########################
+### Category interface ###
+##########################
+
+"""
+    isnonterminal(category) ::Bool
+"""
+isnonterminal(category) = !isterminal(category)
+
+"""
+    isterminal(category) ::Bool
+"""
+isterminal(category) = !isnonterminal(category)
+
+########################################
+### Standard category implementation ###
+########################################
+
+struct StdCategory{T}
+  isterminal :: Bool
+  val        :: T
+end
+
+T(val) = StdCategory(true, val)
+NT(val) = StdCategory(false, val)
+
+T(c::StdCategory)  = @set c.isterminal = true
+NT(c::StdCategory) = @set c.isterminal = false
+
+isterminal(c::StdCategory) = c.isterminal
+default(::Type{StdCategory{T}}) where T = StdCategory(default(Bool), default(T))
+
+function show(io::IO, c::StdCategory)
+  if isterminal(c)
+    print(io, "T($(c.val))")
+  else
+    print(io, "NT($(c.val))")
+  end
+end
+
+######################
+### Rule interface ###
+######################
+
+"""
+    arity(rule::Rule) ::Int
+
+Rules have constant length of their right-hand sides and 
+`arity(rule)` returns this length.
+"""
+function arity end
+
+"""
+    apply([grammar,] rule, category)
+
+Apply `rule` to `category`, potentially using information from `grammar`.
+Returns `nothing` if `rule` is not applicable to `category`.
+Default implementation doesn't use `grammar`'s information and calls
+`apply(rule, category)`.
+"""
+apply(_grammar, rule, category) = apply(rule, category)
+apply(_rule::Rule, _category) = nothing
+
+isapplicable(rule) = category -> isapplicable(rule, category)
+isapplicable(rule, category) = !isnothing(apply(rule, category))
+isapplicable(grammar, rule, category) = !isnothing(apply(grammar, rule, category))
+
+####################################
+### Standard rule implementation ###
+####################################
+
+struct StdRule{C} <: Rule{C}
   lhs :: C
   rhs :: AtMost{C, 2}
 end
@@ -107,7 +121,7 @@ StdRule(lhs, rhs...) = StdRule(lhs, atmost2(rhs...))
 -->(lhs::C, rhs::C) where C = StdRule(lhs, rhs)
 -->(lhs::C, rhs) where C = StdRule(lhs, rhs...)
 
-apply(r::StdRule{C}, c::C) where C = r.lhs == c ? tuple(r.rhs...) : nothing
+apply(r::StdRule, c) = r.lhs == c ? tuple(r.rhs...) : nothing
 arity(r::StdRule) = length(r.rhs)
 
 function show(io::IO, r::StdRule)
@@ -127,30 +141,42 @@ on `stack`. Completions are typed as rule applications.
 """
 function push_completions! end
 
-"""
-    logpdf(grammar, lhs, rule)
+function observe_app!(ruledist, app, k=1)
+  if insupport(ruledist(app.lhs), app.rule)
+    add_obs!(ruledist(app.lhs), app.rule, k)
+  else
+    @info "Rule $(app.rule) not observed. It's not in the rule distribution."
+  end
+end
 
-Logarithm of the probability of applying `rule` to `lhs`.
-Parameters are typically contained in `grammar`.
-"""
-function logpdf end
+function observe_tree!(treelet2rule, ruledist, tree)
+  for app in tree2apps(treelet2rule, tree)
+    observe_app!(ruledist, app)
+  end
+end
 
-mutable struct StdGrammar{C, P} <: AbstractGrammar{StdRule{C}}
+function observe_trees!(treelet2rule, ruledist, trees)
+  for tree in trees
+    observe_tree!(treelet2rule, ruledist, tree)
+  end
+end
+
+#######################################
+### Standard grammar implementation ###
+#######################################
+
+mutable struct StdGrammar{C} <: Grammar{StdRule{C}}
   start       :: Set{C}
   rules       :: Set{StdRule{C}}
   completions :: Dict{AtMost{C, 2}, Vector{C}}
-  params      :: P
 
-  function StdGrammar(
-      start, rules::Set{StdRule{C}}, params::P
-    ) where {C, P}
-
+  function StdGrammar(start, rules::Set{StdRule{C}}) where {C, P}
     completions = Dict{AtMost{C, 2}, Vector{C}}()
     for r in rules
       comps = get!(() -> C[], completions, r.rhs)
       push!(comps, r.lhs)
     end
-    return new{C, P}(Set(collect(start)), rules, completions, params)
+    return new{C}(Set(collect(start)), rules, completions)
   end
 end
 
@@ -163,32 +189,168 @@ function push_completions!(grammar::StdGrammar, stack, categories...)
   end
 end
 
-#########################
-### Scoring interface ###
-#########################
+##########################
+### Rule distributions ###
+##########################
 
-abstract type Scoring end
-
-function score_type(grammar::AbstractGrammar, scoring::Scoring) 
-  score_type(typeof(grammar), typeof(scoring))
+struct DirCatRuleDist{C, R<:Rule{C}}
+  dists :: Dict{C, DirCat{R}}
 end
 
-function score_type(::Type{G}, ::Type{S}) where 
-  {G <: AbstractGrammar, S <: Scoring}
-  error("Function score_type not implemented for $G with $S.")
+(d::DirCatRuleDist)(c) = d.dists[c]
+
+function symdircat_ruledist(categories, rules, concentration=1.0)
+  applicable_rules(c) = filter(r -> isapplicable(r, c), rules)
+  dists = Dict(
+    c => symdircat(applicable_rules(c), concentration) 
+    for c in categories
+  )
+  DirCatRuleDist(dists)
 end
 
-function ruleapp_score(scoring, grammar, lhs, rule)
-  error("Function ruleapp_score not implemented")
+struct ConstDirCatRuleDist{R<:Rule}
+  dist :: DirCat{R}
 end
 
-function add_scores(scoring, left, right) 
-  error("Function add_scores not implemented") 
+(d::ConstDirCatRuleDist)(c) = d.dist
+
+#####################
+### Product rules ###
+#####################
+
+struct ProductRule{C1, C2, R1<:Rule{C1}, R2<:Rule{C2}} <: Rule{Tuple{C1, C2}}
+  rule1 :: R1
+  rule2 :: R2
+
+  function ProductRule(rule1::R1, rule2::R2) where {
+      C1, C2, R1 <: Rule{C1}, R2 <: Rule{C2}
+    }
+    @assert arity(rule1) == arity(rule2)
+    new{C1, C2, R1, R2}(rule1, rule2)
+  end
 end
 
-function mul_scores(scoring, left, right)
-  error("Function mul_scores not implemented") 
+import Base: getindex
+function getindex(rule::ProductRule, i)
+  if i == 1
+    rule.rule1
+  elseif i == 2
+    rule.rule2
+  else
+    BoundsError(rule, i)
+  end
 end
 
-mul_scores(scoring::Scoring, s1, s2, s3) = 
-  mul_scores(scoring, s1, mul_scores(scoring, s2, s3))
+show(io::IO, r::ProductRule) = print(io, "($(r[1]), $(r[2]))")
+arity(rule::ProductRule) = arity(rule[1])
+
+function apply(rule::ProductRule{C1,C2}, category::Tuple{C1,C2}) where {C1,C2}
+  rhs1 = apply(rule[1], category[1])
+  rhs2 = apply(rule[2], category[2])
+  if isnothing(rhs1) || isnothing(rhs2)
+    nothing
+  else
+    tuple(zip(rhs1, rhs2)...)
+  end
+end
+
+########################
+### Product Grammars ###
+########################
+
+# not thread safe
+# for parallelization use one product grammar per thread
+mutable struct ProductGrammar{
+    C1, R1<:Rule{C1}, G1<:Grammar{R1}, 
+    C2, R2<:Rule{C2}, G2<:Grammar{R2},
+  } <: Grammar{ProductRule{C1,C2,R1,R2}}
+
+  grammar1 :: G1
+  grammar2 :: G2
+  stacks   :: Tuple{Vector{App{C1, R1}}, Vector{App{C2, R2}}}
+
+  function ProductGrammar(grammar1::G1, grammar2::G2) where {
+      C1, R1<:Rule{C1}, G1<:Grammar{R1}, 
+      C2, R2<:Rule{C2}, G2<:Grammar{R2},
+    }
+    stacks = tuple(Vector{App{C1, R1}}(), Vector{App{C2, R2}}())
+    new{C1,R1,G1,C2,R2,G2}(grammar1, grammar2, stacks)
+  end
+end
+
+function getindex(grammar::ProductGrammar, i)
+  if i == 1
+    grammar.grammar1
+  elseif i == 2
+    grammar.grammar2
+  else
+    BoundsError(grammar, i)
+  end
+end
+
+function push_completions!(grammar::ProductGrammar, stack, categories...)
+  function unzip(xs)
+    n = length(first(xs))
+    ntuple(i -> map(x -> x[i], xs), n)
+  end
+
+  rhss = unzip(categories) # right-hand sides
+  push_completions!(grammar[1], grammar.stacks[1], rhss[1]...)
+  push_completions!(grammar[2], grammar.stacks[2], rhss[2]...)
+
+  for app1 in grammar.stacks[1], app2 in grammar.stacks[2]
+    app = App((app1.lhs, app2.lhs), ProductRule(app1.rule, app2.rule))
+    push!(stack, app)
+  end
+
+  empty!(grammar.stacks[1])
+  empty!(grammar.stacks[2])
+  return nothing
+end
+
+#############################
+### Variational inference ###
+#############################
+
+function estimate_rule_counts(
+    ruledist, grammar, sequences, seq2start, seq2numtrees=seq->length(seq)^2;
+    showprogress=true
+  )
+  function single_estimate(sequence)
+    scoring = WDS(ruledist, grammar, logvarpdf)
+    chart = chartparse(grammar, scoring, sequence)
+    forest = chart[1, end][seq2start(sequence)]
+    n = seq2numtrees(sequence)
+    return 1/n * counter(sample_derivations(scoring, forest, n))
+  end
+  #
+  p = Progress(
+    length(sequences); 
+    desc="estimating rule counts: ", 
+    enabled=showprogress
+  )
+  estimates_per_sequence = progress_map(single_estimate, sequences; progress=p)
+  reduce(merge!, estimates_per_sequence)
+end
+
+# run variational inference
+function runvi(epochs, mk_prior, estimation_args...; showprogress=true)
+  ruledist = first(estimation_args) # bring into scope
+  for e in 1:epochs
+    showprogress ? println("epoch $e of $epochs") : nothing
+    rule_counts = estimate_rule_counts(estimation_args...; showprogress)
+    ruledist = mk_prior()
+    for (app, pscount) in rule_counts
+      add_obs!(ruledist(app.lhs), app.rule, pscount)
+    end
+  end
+  ruledist
+end
+
+# run variational inference with automatic prior initialization
+function runvi(
+    epochs, mk_prior, grammar::Grammar, other_estimation_args...;
+    showprogress=true
+  )
+  runvi(epochs, mk_prior, mk_prior(), grammar, other_estimation_args...; showprogress)
+end

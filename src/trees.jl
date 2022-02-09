@@ -25,7 +25,17 @@ end
 
 dict2tree(dict; args...) = dict2tree(identity, dict; args...)
 
-function apply(derivation::Vector{<:AbstractRule}, c)
+function zip_trees(t1, t2)
+  @assert length(t1.children) == length(t2.children)
+  if isleaf(t1)
+    Tree((t1.label, t2.label))
+  else
+    zipped_children = map(zip_trees, t1.children, t2.children)
+    Tree((t1.label, t2.label), zipped_children)
+  end
+end
+
+function apply(derivation::Vector{<:Rule}, c)
   i = 0 # rule index
   next_rule() = (i += 1; derivation[i])
   backtrack() = (i -= 1)
@@ -73,6 +83,9 @@ innerlabels(tree::Tree) =
 
 tree2derivation(treelet2rule, tree::Tree) = 
   [treelet2rule(tl) for tl in treelets(tree) if arity(tl) >= 1]
+
+tree2apps(treelet2rule, tree::Tree) = 
+  [App(tl.root_label, treelet2rule(tl)) for tl in treelets(tree) if arity(tl) >= 1]
 
 function treelet2stdrule(treelet::Treelet)
   @assert arity(treelet) in (1, 2)

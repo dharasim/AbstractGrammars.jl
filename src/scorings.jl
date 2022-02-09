@@ -1,21 +1,37 @@
+mul_scores(scoring::Scoring, s1, s2, s3) = 
+  mul_scores(scoring, s1, mul_scores(scoring, s2, s3))
+
 ######################
 ### Inside scoring ###
 ######################
 
-struct InsideScoring <: Scoring end
-score_type(::Type{<:AbstractGrammar}, ::Type{InsideScoring}) = LogProb
-ruleapp_score(::InsideScoring, grammar::AbstractGrammar, lhs, rule) =
-  LogProb(logpdf(grammar, lhs, rule), islog=true)
+struct InsideScoring{D} <: Scoring
+  ruledist :: D
+end
+
+scoretype(::InsideScoring, grammar) = LogProb
+
+function ruleapp_score(sc::InsideScoring, lhs, rule)
+  LogProb(logpdf(sc.ruledist(lhs), rule), islog=true)
+end
+
 add_scores(::InsideScoring, left, right) = left + right
 mul_scores(::InsideScoring, left, right) = left * right
+
+# # test
+# d = symdircat_ruledist(['a', 'b'], ['a' --> 'b', 'b' --> 'b'])
+# sc = InsideScoring(d)
+# @assert scoretype(sc, nothing) == LogProb
+# @assert isone(ruleapp_score(sc, 'a', 'a' --> 'b'))
+# @assert iszero(ruleapp_score(sc, 'a', 'a' --> 'a'))
 
 #####################
 ### Count scoring ###
 #####################
 
 struct CountScoring <: Scoring end
-score_type(::Type{<:AbstractGrammar}, ::Type{CountScoring}) = Int
-ruleapp_score(::CountScoring, ::AbstractGrammar, ::Any, ::Any) = 1
+scoretype(::CountScoring, grammar) = Int
+ruleapp_score(::CountScoring, ::Any, ::Any) = 1
 add_scores(::CountScoring, left, right) = left + right
 mul_scores(::CountScoring, left, right) = left * right
 
@@ -24,8 +40,8 @@ mul_scores(::CountScoring, left, right) = left * right
 #######################
 
 struct BooleanScoring <: Scoring end
-score_type(::Type{<:AbstractGrammar}, ::Type{BooleanScoring}) = Bool
-ruleapp_score( ::BooleanScoring, ::AbstractGrammar, ::Any, ::Any) = true
+scoretype(::BooleanScoring, grammar) = Bool
+ruleapp_score(::BooleanScoring, ::Any, ::Any) = true
 add_scores(::BooleanScoring, left, right) = left || right
 mul_scores(::BooleanScoring, left, right) = left && right
 
@@ -33,7 +49,7 @@ mul_scores(::BooleanScoring, left, right) = left && right
 ### Best derivation scoring ###
 ###############################
 
-struct BestDerivation{C, R<:AbstractRule{C}}
+struct BestDerivation{C, R<:Rule{C}}
   prob :: LogProb
   apps :: Vector{App{C, R}}
 end
@@ -44,15 +60,18 @@ function zero(::Type{BestDerivation{C, R}}) where {C, R}
   BestDerivation(zero(LogProb), App{C, R}[])
 end
 
-struct BestDerivationScoring <: Scoring end
+struct BestDerivationScoring{D} <: Scoring
+  ruledist :: D
+end
 
-function score_type(::Type{G}, ::Type{BestDerivationScoring}) where 
-    {C, R <: AbstractRule{C}, G <: AbstractGrammar{R}}
+function scoretype(::BestDerivationScoring, ::Grammar{R}) where {C, R<:Rule{C}} 
   BestDerivation{C, R}
 end
 
-function ruleapp_score(::BestDerivationScoring, grammar::AbstractGrammar, lhs, rule)
-  BestDerivation(LogProb(logpdf(grammar, lhs, rule), islog=true), [App(lhs, rule)])
+function ruleapp_score(sc::BestDerivationScoring, lhs, rule)
+  BestDerivation(
+    LogProb(logpdf(sc.ruledist(lhs), rule), islog=true), 
+    [App(lhs, rule)])
 end
 
 function add_scores(::BestDerivationScoring, left, right)
@@ -74,7 +93,7 @@ end
 
 @enum ScoreTag ADD MUL VAL ZERO
 
-struct ScoredFreeEntry{S,T}
+struct ScoredFreeEntry{S, T}
   tag        :: ScoreTag
   score      :: S
   value      :: T
@@ -88,7 +107,7 @@ struct ScoredFreeEntry{S,T}
     op    :: Union{typeof(+), typeof(*)},
     left  :: ScoredFreeEntry{S,T}, 
     right :: ScoredFreeEntry{S,T}
-  ) where {S,T}
+  ) where {S, T}
     tag(::typeof(+)) = ADD
     tag(::typeof(*)) = MUL
     score = op(left.score, right.score)
@@ -104,7 +123,7 @@ struct ScoredFreeEntry{S,T}
     store :: Vector{ScoredFreeEntry{S,T}},
     score :: S,
     value :: T
-  ) where {S,T}
+  ) where {S, T}
     index = length(store) + 1
     x = new{S,T}(VAL, score, value, index)
     push!(store, x)
@@ -117,61 +136,61 @@ struct ScoredFreeEntry{S,T}
   end
 end
 
-zero(::Type{ScoredFreeEntry{S,T}}) where {S,T} = ScoredFreeEntry(S, T)
+zero(::Type{ScoredFreeEntry{S, T}}) where {S,T} = ScoredFreeEntry(S, T)
 iszero(x::ScoredFreeEntry) = x.tag == ZERO
 
 # Weighted Derivation Scoring (WDS)
-struct WDS{S,T,L} <: Scoring
-  store  :: Vector{ScoredFreeEntry{S,T}}
-  logpdf :: L
+struct WDS{D, T, L} <: Scoring
+  ruledist :: D
+  store    :: Vector{ScoredFreeEntry{LogProb, T}}
+  logpdf   :: L
 end
 
-function WDS(::G, logpdf=logpdf) where
-  {C, R <: AbstractRule{C}, G <: AbstractGrammar{R}}
-  WDS(ScoredFreeEntry{LogProb, App{C, R}}[], logpdf)
+function WDS(ruledist, ::Grammar{R}, logpdf=logpdf) where {C, R <: Rule{C}}
+  WDS(ruledist, ScoredFreeEntry{LogProb, App{C, R}}[], logpdf)
 end
 
-score_type(::Type{<:AbstractGrammar}, ::Type{<:WDS{S,T}}) where {S, T} =
-  ScoredFreeEntry{S, T}
-ruleapp_score(s::WDS, grammar, lhs, rule) = 
-  ScoredFreeEntry(
-    s.store, 
-    LogProb(s.logpdf(grammar, lhs, rule), islog=true), 
-    App(lhs, rule))
+function scoretype(::WDS, ::Grammar{R}) where {C, R<:Rule{C}} 
+  ScoredFreeEntry{LogProb, App{C, R}}
+end
 
-function add_scores(s::WDS, x, y)
+function ruleapp_score(sc::WDS, lhs, rule)
+  logp = LogProb(sc.logpdf(sc.ruledist(lhs), rule), islog=true)
+  ScoredFreeEntry(sc.store, logp, App(lhs, rule))
+end
+
+function add_scores(sc::WDS, x, y)
   ZERO == x.tag && return y
   ZERO == y.tag && return x
-  return ScoredFreeEntry(s.store, +, x, y)
+  return ScoredFreeEntry(sc.store, +, x, y)
 end
 
-function mul_scores(s::WDS, x, y)
+function mul_scores(sc::WDS, x, y)
   ZERO == x.tag && return x
   ZERO == y.tag && return y
-  return ScoredFreeEntry(s.store, *, x, y)
+  return ScoredFreeEntry(sc.store, *, x, y)
 end
 
 function sample_derivations(
-    s::WDS{S,T}, x::ScoredFreeEntry{S,T}, n::Int
-  ) where {S,T}
-  
+    sc::WDS, x::ScoredFreeEntry{S, T}, n::Int
+  ) where {S, T}
   vals = Vector{T}()
   for _ in 1:n
-    sample_derivation!(vals, s, x)
+    sample_derivation!(vals, sc, x)
   end
   vals
 end
 
-function sample_derivation!(vals, s::WDS, x::ScoredFreeEntry{S,T}) where {S,T}
+function sample_derivation!(vals, sc::WDS, x::ScoredFreeEntry{S,T}) where {S, T}
   if VAL  ⊣ x 
     push!(vals, x.value)
   elseif ADD ⊣ x
-    goleft = rand(S) < s.store[x.leftIndex].score / x.score
+    goleft = rand(S) < sc.store[x.leftIndex].score / x.score
     index = goleft ? x.leftIndex : x.rightIndex
-    sample_derivation!(vals, s, s.store[index])
+    sample_derivation!(vals, sc, sc.store[index])
   elseif MUL ⊣ x
-    sample_derivation!(vals, s, s.store[x.leftIndex])
-    sample_derivation!(vals, s, s.store[x.rightIndex])
+    sample_derivation!(vals, sc, sc.store[x.leftIndex])
+    sample_derivation!(vals, sc, sc.store[x.rightIndex])
   else # ZERO ⊣ x
     error("cannot sample from zero")
   end
