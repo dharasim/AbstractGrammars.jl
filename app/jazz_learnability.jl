@@ -23,18 +23,18 @@ end
 ### Utils ###
 #############
 
-begin
-  *(a::Accumulator, n::Number) = Accumulator(Dict(k => v*n for (k,v) in a.map))
-  *(n::Number, a::Accumulator) = Accumulator(Dict(k => n*v for (k,v) in a.map))
-  +(a::Accumulator, n::Number) = Accumulator(Dict(k => v+n for (k,v) in a.map))
-  +(n::Number, a::Accumulator) = Accumulator(Dict(k => n+v for (k,v) in a.map))
-
-  function most_frequent(a::Accumulator, n=10)
-    @_ collect(a.map) |>
-      sort!(__, by=kv->kv[2], rev=true) |>
-      first(__, n)
-  end
-end
+# begin
+#   *(a::Accumulator, n::Number) = Accumulator(Dict(k => v*n for (k,v) in a.map))
+#   *(n::Number, a::Accumulator) = Accumulator(Dict(k => n*v for (k,v) in a.map))
+#   +(a::Accumulator, n::Number) = Accumulator(Dict(k => v+n for (k,v) in a.map))
+#   +(n::Number, a::Accumulator) = Accumulator(Dict(k => n+v for (k,v) in a.map))
+#   #
+#   function most_frequent(a::Accumulator, n=10)
+#     @_ collect(a.map) |>
+#       sort!(__, by=kv->kv[2], rev=true) |>
+#       first(__, n)
+#   end
+# end
 
 function predict_derivations(
     grammar, ruledist, sequences, seq2start; showprogress=true
@@ -125,10 +125,14 @@ function mk_harmony_grammar(rulekinds=[:duplication, :leftheaded, :rightheaded])
   StdGrammar(Set(start_categories), Set(rules))
 end
 
+function mk_harmony_prior(harmony_grammar)
+  symdircat_ruledist(NT.(all_chords), harmony_grammar.rules, 0.1)
+end
+
 # test harmony grammar
 @time begin
   grammar = mk_harmony_grammar([:duplication, :rightheaded])
-  ruledist = symdircat_ruledist(NT.(all_chords), grammar.rules, 0.1)
+  ruledist = mk_harmony_prior(grammar)
   accs = calc_accs(
     grammar, ruledist, treebank, seq->NT(seq[end]), treekey="harmony_tree")
   @show mean(accs)
@@ -159,8 +163,8 @@ end
 
 using Pitches: SpelledIC
 
-const all_intervals = SpelledIC.(-12:12)
-const nonzero_intervals = [SpelledIC.(-12:-1); SpelledIC.(1:12)]
+all_intervals(from, to) = SpelledIC.(from:to)
+
 const all_forms = instances(ChordForm)
 const transp_ruletags = Tag[
   "termination", "duplication", "rightheaded", "leftheaded"]
@@ -199,17 +203,19 @@ function apply(r::TranspRule, c::StdCategory{TPCC})
       tuple(T(c))
     elseif "duplication" ⊣ r
       tuple(c, c)
-    elseif "rightheaded" ⊣ r
+    elseif "rightheaded" ⊣ r && (!iszero(r.interval) || r.form != c.val.form)
       d = NT(Chord(c.val.root - r.interval, r.form))
       tuple(d, c)
-    elseif "leftheaded" ⊣ r
+    elseif "leftheaded" ⊣ r && (!iszero(r.interval) || r.form != c.val.form)
       d = NT(Chord(c.val.root + r.interval, r.form))
       tuple(c, d)
+    else
+      nothing
     end
   end
 end
 
-# # tests
+# # test rule application
 # c = NT(parse_chord("Dm7"))
 # r = TranspTerm()
 # @assert apply(r, c) == (T(parse_chord("Dm7")),)
@@ -226,7 +232,7 @@ isheaded(r::TranspRule) = r.tag in ("rightheaded", "leftheaded")
 struct TranspGrammar <: Grammar{TranspRule}
   headedrules :: Set{TranspRule}
   function TranspGrammar(headedrules)
-    @assert all(isheaded(r) for r in headedrules)
+    @assert all(isheaded.(headedrules))
     new(Set(headedrules))
   end
 end
@@ -255,39 +261,119 @@ function push_completions!(grammar::TranspGrammar, stack, c1, c2)
   end
 end
 
-function mk_transp_grammar(rulekinds=[:leftheaded, :rightheaded])
+function mk_transp_grammar(from, to, rulekinds=[:leftheaded, :rightheaded])
   headedrules = TranspRule[]
   if :leftheaded in rulekinds
     leftheaded_rules = [
       TranspLH(i, f) 
-      for i in all_intervals 
+      for i in all_intervals(from, to)
       for f in all_forms
-      if !iszero(i)
     ]
     append!(headedrules, leftheaded_rules)
   end
   if :rightheaded in rulekinds
     rightheaded_rules = [
       TranspRH(i, f) 
-      for i in all_intervals 
+      for i in all_intervals(from, to)
       for f in all_forms
-      if !iszero(i)
     ]
     append!(headedrules, rightheaded_rules)
   end
   TranspGrammar(headedrules)
 end
 
-tg = mk_transp_grammar([:rightheaded])
-hg = mk_harmony_grammar([:duplication, :rightheaded])
-scoring = CountScoring()
-seq = leaflabels(treebank[30]["harmony_tree"])
-@assert ==(
-  chartparse(tg, scoring, seq)[1, end][NT(seq[end])],
-  chartparse(hg, scoring, seq)[1, end][NT(seq[end])]
-)
+# # test count parsing with transp.-inv. harmony grammar
+# tg = mk_transp_grammar([:rightheaded])
+# hg = mk_harmony_grammar([:duplication, :rightheaded])
+# scoring = CountScoring()
+# seq = leaflabels(treebank[30]["harmony_tree"])
+# @assert ==(
+#   chartparse(tg, scoring, seq)[1, end][NT(seq[end])],
+#   chartparse(hg, scoring, seq)[1, end][NT(seq[end])]
+# )
 
-# next step: implement distribution for transpositionally invariant rules
+function mk_transp_harmony_prior(transp_grammar)
+  all_rules = [collect(transp_grammar.headedrules); TranspTerm(); TranspDpl()]
+  rules(f) = filter(all_rules) do r
+    r.tag in ("termination", "duplication") || !iszero(r.interval) || r.form!=f
+  end
+  dists = Dict(f => symdircat(rules(f), 0.1) for f in all_forms)
+  nt -> dists[nt.val.form]
+end
+
+# # test recovering leaf sequence during best parsing 
+# for (i, tune) in enumerate(treebank)
+#   println("tune $i: $(tune["title"])")
+#   rulekinds = [:rightheaded]
+#   tg = mk_transp_grammar(-12, 12, rulekinds)
+#   ruledist = mk_transp_harmony_prior(tg)
+#   scoring = BestDerivationScoring(ruledist)
+#   seq = leaflabels(treebank[i]["harmony_tree"])
+#   chart = chartparse(tg, scoring, seq)
+#   start = NT(seq[end])
+#   derivation = [app.rule for app in chart[1, end][start].apps]
+#   @assert leaflabels(apply(derivation, start)) == seq
+# end
+
+function treelet2transprule(treelet)
+  lhs = treelet.root_label
+  @assert isnonterminal(lhs)
+  if arity(treelet) == 1
+    rhs = first(treelet.child_labels)
+    @assert isterminal(rhs) && lhs.val == rhs.val
+    return TranspTerm()
+  elseif arity(treelet) == 2
+    rhs1, rhs2 = treelet.child_labels
+    @assert isnonterminal(rhs1) && isnonterminal(rhs2)
+    if lhs == rhs1 == rhs2
+      return TranspDpl()
+    elseif lhs == rhs1
+      return TranspLH(rhs2.val.root - rhs1.val.root, rhs2.val.form)
+    elseif lhs == rhs2
+      return TranspRH(rhs2.val.root - rhs1.val.root, rhs1.val.form)
+    end
+  end
+  error("cannot convert treelet $treelet into transp.-inv. rule")
+end
+  
+
+# test transp. inv. harmony grammar
+begin
+  rulekinds = [:rightheaded]
+  tg = mk_transp_grammar(-12, 12, rulekinds)
+  ruledist = mk_transp_harmony_prior(tg)
+  seq2start = seq -> NT(seq[end])
+  accs = calc_accs(tg, ruledist, treebank, seq2start, treekey="harmony_tree")
+  @show mean(accs)
+  harmony_trees = [tune["harmony_tree"] for tune in treebank]
+  observe_trees!(treelet2transprule, ruledist, harmony_trees)
+  accs = calc_accs(tg, ruledist, treebank, seq2start, treekey="harmony_tree")
+  @show mean(accs)
+end
+
+rulekinds = [:rightheaded]
+tg = mk_transp_grammar(-12, 12, rulekinds)
+max_level = 8
+split_ratios = filter(x -> x < 1, calkin_wilf_sequence(max_level))
+rg = RhythmGrammar(Set(RhymSplit.(split_ratios)))
+pg = ProductGrammar(tg, rg)
+ruledist = mk_simple_product_prior(mk_transp_harmony_prior(tg), rg)
+seq2start = seq -> (NT(seq[end][1]), NT(1//1))
+prod_trees = [tune["product_tree"] for tune in treebank]
+treelet2rule = treelet2prodrule(treelet2transprule, treelet2rhythmrule)
+observe_trees!(treelet2rule, ruledist, prod_trees)
+accs = calc_accs(pg, ruledist, treebank, seq2start, treekey="product_tree")
+@show mean(accs)
+
+
+
+sequences = [leaflabels(tune["product_tree"]) for tune in treebank]
+for level_accept in (0.7:0.01:0.8)
+  mk_prior = () -> mk_calkin_wilf_product_prior(mk_transp_harmony_prior(tg), level_accept, max_level)
+  ruledist_post = runvi(3, mk_prior, pg, sequences, seq2start, showprogress=false)
+  accs = calc_accs(pg, ruledist_post, treebank, seq2start, treekey="product_tree", showprogress=false)
+  println("level accept $level_accept | mean(accs) = $(mean(accs))")
+end
 
 ######################
 ### Rhythm Grammar ###
@@ -436,11 +522,9 @@ begin
   totrace(::typeof(simple_product_model), rule) = 
     (harmony_rule=rule[1], rhythm_rule=rule[2])
 
-  function mk_simple_product_prior(harmony_grammar, rhythm_grammar)
-    nonterminals = NT.(all_chords)
-    harmony_dist = symdircat_ruledist(nonterminals, harmony_grammar.rules, 0.1)
+  function mk_simple_product_prior(harmony_prior, rhythm_grammar)
     rhythm_dist = symdircat(rhythm_grammar.splitrules, 0.1)
-    nt -> simple_product_model(harmony_dist, rhythm_dist, nt)
+    nt -> simple_product_model(harmony_prior, rhythm_dist, nt)
   end
 end
 
@@ -450,7 +534,7 @@ end
   hg = mk_harmony_grammar(rulekinds)
   rg = mk_rhythm_grammar()
   pg = ProductGrammar(hg, rg)
-  ruledist = mk_simple_product_prior(hg, rg)
+  ruledist = mk_simple_product_prior(mk_harmony_prior(hg), rg)
   seq2start = seq -> (NT(seq[end][1]), NT(1//1))
   accs = calc_accs(pg, ruledist, treebank, seq2start, treekey="product_tree")
   @show mean(accs)
@@ -467,7 +551,7 @@ begin
   hg = mk_harmony_grammar(rulekinds)
   rg = mk_rhythm_grammar()
   pg = ProductGrammar(hg, rg)
-  ruledist = mk_simple_product_prior(hg, rg)
+  ruledist = mk_simple_product_prior(mk_harmony_prior(hg), rg)
   seq2start = seq -> (NT(seq[end][1]), NT(1//1))
   sequences = [leaflabels(tune["product_tree"]) for tune in treebank]
   counts = estimate_rule_counts(ruledist, pg, sequences[30:32], seq2start)
@@ -478,7 +562,7 @@ begin
     first(__, 10) |>
     foreach(println, __)
 
-  mk_prior = () -> mk_simple_product_prior(hg, rg)
+  mk_prior = () -> mk_simple_product_prior(mk_harmony_prior(hg), rg)
   ruledist_post = runvi(2, mk_prior, pg, sequences, seq2start)
   accs = calc_accs(pg, ruledist_post, treebank, seq2start, treekey="product_tree")
   mean(accs)
@@ -488,23 +572,12 @@ end
 ### Calkin-Wilf model ###
 #########################
 
-max_lvl = 8
-k = 300
-Dict(l => k * (max_lvl-l+1) for l in 1:max_lvl)
-DirCat(Dict(r => k * (max_lvl-calkin_wilf_level(r)+1) for r in calkin_wilf_sequence(max_lvl)))
-
 include("jazz_learnability/calkin_wilf.jl")
 
-function mk_calkin_wilf_product_prior(harmony_grammar, lvl_accept, max_lvl)
-  harmony_dist = symdircat_ruledist(NT.(all_chords), harmony_grammar.rules, 0.1)
-  # level_dist = BetaGeometric(1, k)
-  # level_dist = symdircat(1:max_lvl, k)
-  # level_dist = DirCat(Dict(l => k * (max_lvl-l+1) for l in 1:max_lvl))
+function mk_calkin_wilf_product_prior(harmony_prior, lvl_accept, max_lvl)
   level_dist = Geometric(1-lvl_accept)
   ratio_dists = symdircat.(proper_ratios_of_calkin_wilf_level.(1:max_lvl), 0.1)
-  # nt -> calkin_wilf_product_model(harmony_dist, level_dist, ratio_dists, nt)
-  # ratio_dist = DirCat(Dict(r => k * (max_lvl-calkin_wilf_level(r)+1) for r in calkin_wilf_sequence(max_lvl)))
-  nt -> calkin_wilf_product_model(harmony_dist, level_dist, ratio_dists, nt)
+  nt -> calkin_wilf_product_model(harmony_prior, level_dist, ratio_dists, nt)
 end
 
 @probprog function calkin_wilf_product_model(
@@ -517,12 +590,7 @@ end
   else
     levelm1 ~ level_dist # level minus one
     level = levelm1 + 1
-    # level_ratios = proper_ratios_of_calkin_wilf_level(level)
-    # ratio ~ UniformCategorical(level_ratios)
-
-    # level ~ level_dist
     ratio ~ ratio_dists[level]
-    
     rhythm_rule ~ Dirac(RhymSplit(ratio))
   end
   return
@@ -540,9 +608,6 @@ function totrace(::typeof(calkin_wilf_product_model), rule)
     ratio = rhythm_rule.split_ratio
     levelm1 = calkin_wilf_level(ratio) - 1
     (; harmony_rule, levelm1, ratio, rhythm_rule)
-    # level = calkin_wilf_level(ratio)
-    # (; harmony_rule, level, ratio, rhythm_rule)
-    # (; harmony_rule, ratio, rhythm_rule)
   end
 end
 
@@ -554,7 +619,7 @@ begin
   split_ratios = filter(x -> x < 1, calkin_wilf_sequence(max_level))
   rg = RhythmGrammar(Set(RhymSplit.(split_ratios)))
   pg = ProductGrammar(hg, rg)
-  ruledist = mk_calkin_wilf_product_prior(hg, 0.5, max_level)
+  ruledist = mk_calkin_wilf_product_prior(mk_harmony_prior(hg), 0.5, max_level)
   seq2start = seq -> (NT(seq[end][1]), NT(1//1))
   sequences = [leaflabels(tune["product_tree"]) for tune in treebank]
 end
@@ -567,9 +632,10 @@ counts = estimate_rule_counts(ruledist, pg, sequences, seq2start)
   first(__, 30) |>
   foreach(println, __)
 
+# grid search over level acceptance probability
 using DataStructures: SortedDict
 for level_accept in (0.75:0.01:0.80)
-  mk_prior = () -> mk_calkin_wilf_product_prior(hg, level_accept, max_level)
+  mk_prior = () -> mk_calkin_wilf_product_prior(mk_harmony_prior(hg), level_accept, max_level)
   ruledist_post = runvi(5, mk_prior, pg, sequences, seq2start, showprogress=false)
   accs = calc_accs(pg, ruledist_post, treebank, seq2start, treekey="product_tree", showprogress=false)
   println("level accept $level_accept | mean(accs) = $(mean(accs))")
