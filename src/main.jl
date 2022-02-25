@@ -129,6 +129,36 @@ function show(io::IO, r::StdRule)
   foreach(c -> print(io, " $c"), r.rhs)
 end
 
+macro rules(exprs...)
+  # for example: evaluate :(a | b c | d) to [:a, :|, :b, :c, :|, :d]
+  function flatten_or_expression(ex)
+    if ex isa Expr && ex.head == :call && ex.args[1] == :|
+      l = flatten_or_expression(ex.args[2])
+      r = ex.args[3]
+      [l..., :|, r]
+    else
+      [ex]
+    end
+  end
+
+  function flatten_or_expressions(exprs...)
+    vcat(map(flatten_or_expression, exprs)...)
+  end
+
+  function split_by_pipe(v::Vector)
+    a = [v; :(|)]
+    splits = [0; findall(isequal(:|), a)]
+    splitstarts, splitends = @view(splits[1:end-1]), @view(splits[2:end])
+    [view(a, i1+1:i2-1) for (i1, i2) in zip(splitstarts, splitends)]
+  end
+
+  @assert exprs[1].head == :(-->) "Rules must be declared with a long arrow -->"
+  lhs = exprs[1].args[1]
+  rhss = split_by_pipe(flatten_or_expressions(exprs[1].args[2], exprs[2:end]...))
+  rs = [StdRule(lhs, rhs...) for rhs in rhss]
+  :($rs)
+end
+
 #########################
 ### Grammar interface ###
 #########################

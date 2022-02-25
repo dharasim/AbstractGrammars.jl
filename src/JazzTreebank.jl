@@ -7,10 +7,10 @@ import HTTP, JSON
 
 # imports for overloading
 import Base: show
-import AbstractGrammars: default
+import ..AbstractGrammars: default
 
 # imports without overloading
-using AbstractGrammars: normalize, Tree, dict2tree, isleaf, leaflabels, zip_trees, T, NT
+using ..AbstractGrammars: normalize, Tree, dict2tree, isleaf, leaflabels, zip_trees, T, NT
 using Pitches: parsespelledpitch, Pitch, SpelledIC, MidiIC, midipc, alteration, @p_str, tomidi
 using OffsetArrays: OffsetArray
 using Underscores: @_
@@ -166,10 +166,10 @@ end
 const url = "https://raw.githubusercontent.com/DCMLab/JazzHarmonyTreebank/master/treebank.json"
 
 function load_tunes_and_treebank()
-  # tunes = HTTP.get(url).body |> String |> JSON.parse .|> preprocess_tree!
-  tunes = open("data/treebank.json") do file
-    read(file, String) |> JSON.parse .|> preprocess_tree!
-  end
+  tunes = HTTP.get(url).body |> String |> JSON.parse .|> preprocess_tree!
+  # tunes = open("data/treebank.json") do file
+  #   read(file, String) |> JSON.parse .|> preprocess_tree!
+  # end
   treebank = filter(tune -> haskey(tune, "harmony_tree"), tunes)
   for tune in treebank
     tune["rhythm_tree"] = categorize_and_insert_terminal_rules(

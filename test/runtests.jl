@@ -42,7 +42,7 @@ using AbstractGrammars
 ### Test binary-tree counts ###
 ###############################
 
-include("BinaryCountGrammar.jl")
+include("../examples/BinaryCountGrammar.jl")
 using .BinaryCountGrammar: test_binary_count_grammar
 @testset "count all binary trees" begin
   test_binary_count_grammar()
@@ -51,6 +51,13 @@ end
 #############
 ### PCFGs ###
 #############
+
+@testset "rule macro" begin
+  @test [StdRule('a', 'b')] == @rules 'a' --> 'b'
+  @test [StdRule(1, 2, 3)] == @rules 1 --> 2 3 
+  @test [StdRule(1, 2), StdRule(1, 3)] == @rules 1 --> 2 | 3 
+  @test [StdRule(1, 2, 3), StdRule(1, 4), StdRule(1, 5, 6)] == @rules 1 --> 2 3 | 4 | 5 6 
+end
 
 @testset "standard context-free rules" begin
   r = 'a' --> ('b', 'c')

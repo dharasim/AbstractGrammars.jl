@@ -14,7 +14,7 @@ StdCategory, NT, T,
 
 # Rule interface
 Rule, arity, apply, App,
-StdRule, -->,
+StdRule, -->, @rules,
 ProductRule,
 
 # Grammar interface
@@ -38,7 +38,8 @@ Chart, chartparse,
 # Trees
 Tree, labels, innerlabels, leaflabels, tree_similarity, isleaf, zip_trees,
 Treelet, treelets, 
-dict2tree, tree2derivation, tree2apps, treelet2stdrule
+dict2tree, tree2derivation, tree2apps, treelet2stdrule,
+plot_tree
 
 ###############
 ### Imports ###
@@ -78,7 +79,14 @@ const Tag = ShortString31
 # default values for some types
 default(::Type{T}) where T <: Number = zero(T)
 default(::Type{Symbol}) = Symbol()
+default(::Type{QuoteNode}) = QuoteNode(Symbol())
+default(::Type{String}) = ""
 default(::Type{Char}) = ' '
+default(::Type{T}) where T <: AbstractVector = T()
+
+function default(::Type{T}) where T
+  T(map(default, fieldtypes(T))...)
+end
 
 # generic normalization function
 normalize(xs) = xs ./ sum(xs)
@@ -87,14 +95,17 @@ normalize(xs) = xs ./ sum(xs)
 ### Included files ###
 ######################
 
-# include submodules
-include("AtMosts.jl")
+include("PlotTree.jl") # submodule
+using .PlotTree: plot_tree
+
+include("AtMosts.jl") # submodule
 using .AtMosts: AtMost, atmost2
 
-# main module code
 include("main.jl")
 include("chartparse.jl")
 include("scorings.jl")
 include("trees.jl")
+
+include("JazzTreebank.jl") # submodule
 
 end # module
