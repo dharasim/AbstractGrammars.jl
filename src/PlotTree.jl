@@ -89,7 +89,7 @@ function plot_tree(t;
   end
 
   # output picture as PNG
-  comp |> PNG(width, height)
+  comp |> SVG(width, height) 
 end
 
 end # module

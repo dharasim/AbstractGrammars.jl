@@ -1,6 +1,7 @@
 module JazzTreebank
 
 export TPCC, ChordForm, parse_chord, load_tunes_and_treebank, chord_durations
+export parsespelledpitch # re-export
 
 # named imports
 import HTTP, JSON
