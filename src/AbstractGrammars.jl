@@ -51,7 +51,6 @@ import Base: zero, iszero, insert!, map, eltype, show, +, *
 using SimpleProbabilisticPrograms: BetaBinomial, add_obs!, DirCat, symdircat, logvarpdf
 using LogProbs
 using ShortStrings: ShortString31
-using MLStyle: @match
 using Setfield: @set
 using ProgressMeter: Progress, progress_map
 using DataStructures: counter, Accumulator
