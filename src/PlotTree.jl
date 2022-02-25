@@ -1,6 +1,5 @@
 module PlotTree
 
-import Cairo, Fontconfig
 using Compose
 export plot_tree
 
