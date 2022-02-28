@@ -330,8 +330,6 @@ version = "2.2.2"
 
 [[deps.Pitches]]
 git-tree-sha1 = "49f99319919b254327a9521ba741a02c9abfaf67"
-repo-rev = "main"
-repo-url = "https://github.com/DCMLab/Pitches.jl.git"
 uuid = "71ce3a53-bc01-4ee9-b4af-5ce581ee5149"
 version = "0.1.1"
 
