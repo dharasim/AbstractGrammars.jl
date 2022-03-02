@@ -441,7 +441,7 @@ function prediction_accs_loocv(grammar, mk_ruledist, tunes, seq2start, tune2tree
   Logging.disable_logging(Logging.Info)
   progress_map(index_splits; progress=p) do ((test_idx,), train_idxs)
     ## train rule distribution
-    ruledist = mk_ruledist()
+    ruledist = mk_ruledist() # initializing the prior distribution needs most of the time
     AG.observe_trees!(AG.treelet2stdrule, ruledist, trees[train_idxs])
 
     ## evaluate rule distribution

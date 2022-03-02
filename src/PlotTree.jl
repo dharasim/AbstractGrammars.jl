@@ -6,7 +6,7 @@ export plot_tree
 
 function plot_tree(t; 
     getchildren=t->t.children, getlabel=t->t.label, 
-    textcolor="black", linecolor="grey", white_background=true, save_as=nothing,
+    textcolor="black", linecolor="black", white_background=true, save_as=nothing,
     scale_width=1, scale_heigth=1
   )
   
@@ -35,7 +35,7 @@ function plot_tree(t;
   # recursive function mapping ad-hoc trees to Compose.jl compositions
   function tree_composition(t)
     if isempty(t.children)
-      compose(context(), text(0.5, 0.5, t.label, hcenter, vcenter), fill(textcolor))
+      compose(context(), text(0.5, 0.5, t.label, hcenter, vcenter), fill(textcolor), fontsize(10pt))
     else
       # comps ... compositions
       child_comps = map(tree_composition, t.children)
@@ -55,7 +55,8 @@ function plot_tree(t;
         compose(
           context(0, 0, 1, 1/t.height), 
           text(0.5, 0.5, t.label, hcenter, vcenter), 
-          fill(textcolor)
+          fill(textcolor),
+          fontsize(10pt)
         ), 
         compose.(child_contexts, child_comps)...)
     end
@@ -90,7 +91,7 @@ function plot_tree(t;
   end
 
   # output picture as PNG
-  draw(SVG(width, height), comp)
+  draw(PNG(width, height, dpi=300), comp)
 end
 
 end # module
