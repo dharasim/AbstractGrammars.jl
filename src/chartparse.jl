@@ -6,8 +6,14 @@ function empty_chart(::Type{Category}, ::Type{Score}, n) where {Category,Score}
 end
 
 function insert!(chart_cell::ChartCell, scoring, category, score::S) where S
-    s = get(chart_cell, category, zero(S))
-    chart_cell[category] = add_scores(scoring, s, score)
+    # s = get(chart_cell, category, zero(S))
+    # chart_cell[category] = add_scores(scoring, s, score)
+    
+    if haskey(chart_cell, category)
+      chart_cell[category] = add_scores(scoring, chart_cell[category], score)
+    else
+      chart_cell[category] = score
+    end
 end
 
 struct ScoredCategory{C,S}

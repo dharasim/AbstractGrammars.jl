@@ -25,7 +25,9 @@ StdGrammar, ProductGrammar,
 estimate_rule_counts, runvi,
 
 # Scorings
-InsideScoring, CountScoring, BooleanScoring, BestDerivationScoring,
+InsideScoring, CountScoring, BooleanScoring, 
+BestDerivationScoring, getbestderivation,
+AllDerivationScoring, getallderivations,
 WDS, sample_derivations,
 
 # Rule distributions

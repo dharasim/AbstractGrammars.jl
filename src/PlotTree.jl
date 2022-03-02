@@ -1,6 +1,7 @@
 module PlotTree
 
 using Compose
+import Cairo, Fontconfig
 export plot_tree
 
 function plot_tree(t; 
@@ -89,7 +90,7 @@ function plot_tree(t;
   end
 
   # output picture as PNG
-  comp |> SVG(width, height) 
+  draw(SVG(width, height), comp)
 end
 
 end # module

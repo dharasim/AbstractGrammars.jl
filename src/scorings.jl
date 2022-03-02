@@ -46,12 +46,46 @@ add_scores(::BooleanScoring, left, right) = left || right
 mul_scores(::BooleanScoring, left, right) = left && right
 
 ###############################
+### All derivations scoring ###
+###############################
+
+struct Derivations{R}
+  all :: Vector{Vector{R}}
+end
+
+iszero(ds::Derivations) = isempty(ds.all)
+zero(::Type{Derivations{R}}) where R = Derivations(Vector{R}[])
+getallderivations(ds::Derivations) = ds.all
+
+struct AllDerivationScoring <: Scoring end
+
+function scoretype(::AllDerivationScoring, ::Grammar{R}) where R
+  Derivations{R}
+end
+
+function ruleapp_score(::AllDerivationScoring, lhs, rule)
+  Derivations([[rule]])
+end
+
+function add_scores(::AllDerivationScoring, left, right)
+  Derivations([left.all; right.all])
+end
+
+function mul_scores(::AllDerivationScoring, left, right)
+  Derivations([[l; r] for l in left.all for r in right.all])
+end
+
+###############################
 ### Best derivation scoring ###
 ###############################
 
 struct BestDerivation{C, R<:Rule{C}}
   prob :: LogProb
   apps :: Vector{App{C, R}}
+end
+
+function getbestderivation(bd::BestDerivation)
+  bd.prob.log, [app.rule for app in bd.apps]
 end
 
 iszero(bd::BestDerivation) = iszero(bd.prob)
@@ -80,6 +114,93 @@ end
 
 function mul_scores(::BestDerivationScoring, left, right)
   BestDerivation(left.prob * right.prob, [left.apps; right.apps])
+end
+
+########################################################
+### Faster implementation of best derivation scoring ###
+########################################################
+
+@enum DerivationTag CONCAT RULE
+
+# Each best derivation value is either an inner tree node with tag CONCAT
+# or a leaf node with tag RULE.
+# The rules of the derivation are the rules of the tree's leafs.
+# The usage of indices essentially implements a tiny garbage collector that is
+# much more efficient then Julia's default GC in this case, because the default
+# GC traverses reference graphs recursively.
+struct BestDerivationFast{R<:Rule}
+  tag        :: DerivationTag
+  prob       :: LogProb
+  rule       :: R
+  index      :: Int
+  leftIndex  :: Int
+  rightIndex :: Int
+
+  # concatenation
+  function BestDerivationFast(
+      store :: Vector{BestDerivationFast{R}}, 
+      left  :: BestDerivationFast{R}, 
+      right :: BestDerivationFast{R},
+    ) where R
+    prob = left.prob * right.prob
+    rule = left.rule # dummy value
+    index = length(store) + 1
+    x = new{R}(CONCAT, prob, rule, index, left.index, right.index)
+    push!(store, x)
+    return x
+  end
+
+  # single-rule derivations
+  function BestDerivationFast(store, prob::LogProb, rule::R) where R
+    index = length(store) + 1
+    x = new{R}(RULE, prob, rule, index)
+    push!(store, x)
+    return x
+  end
+end
+
+struct BestDerivationScoringFast{D, R<:Rule} <: Scoring
+  ruledist :: D
+  store    :: Vector{BestDerivationFast{R}}
+end
+
+function BestDerivationScoringFast(ruledist, ::Grammar{R}) where R
+  BestDerivationScoringFast(ruledist, BestDerivationFast{R}[])
+end
+
+function getbestderivation(
+    sc :: BestDerivationScoringFast, 
+    bd :: BestDerivationFast{R}
+  ) where R
+  derivation = R[]
+  getbestderivation!(derivation,sc, bd)
+  bd.prob.log, derivation
+end
+
+function getbestderivation!(out, sc, bd)
+  if bd.tag == RULE
+    push!(out, bd.rule)
+  else # bd.tag == CONCAT
+    getbestderivation!(out, sc, sc.store[bd.leftIndex])
+    getbestderivation!(out, sc, sc.store[bd.rightIndex])
+  end
+end
+
+function scoretype(::BestDerivationScoringFast, ::Grammar{R}) where R 
+  BestDerivationFast{R}
+end
+
+function ruleapp_score(sc::BestDerivationScoringFast, lhs, rule)
+  logp = LogProb(logpdf(sc.ruledist(lhs), rule), islog=true)
+  BestDerivationFast(sc.store, logp, rule)
+end
+
+function add_scores(::BestDerivationScoringFast, left, right)
+  left.prob >= right.prob ? left : right
+end
+
+function mul_scores(sc::BestDerivationScoringFast, left, right)
+  return BestDerivationFast(sc.store, left, right)
 end
 
 ######################################################################

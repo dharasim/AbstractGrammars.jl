@@ -104,6 +104,19 @@ Default implementation doesn't use `grammar`'s information and calls
 apply(_grammar, rule, category) = apply(rule, category)
 apply(_rule::Rule, _category) = nothing
 
+function apply(rule::Rule{C}, categories::Vector{C}) where C
+  for (i,c) in enumerate(categories)
+    if isnonterminal(c)
+      d = apply(rule, c)
+      if isnothing(d)
+        return error("rule not applicable to leftmost nonterminal category")
+      else
+        return [categories[1:i-1]; collect(d); categories[i+1:end]]
+      end
+    end
+  end
+end
+
 isapplicable(rule) = category -> isapplicable(rule, category)
 isapplicable(rule, category) = !isnothing(apply(rule, category))
 isapplicable(grammar, rule, category) = !isnothing(apply(grammar, rule, category))
@@ -121,7 +134,7 @@ StdRule(lhs, rhs...) = StdRule(lhs, atmost2(rhs...))
 -->(lhs::C, rhs::C) where C = StdRule(lhs, rhs)
 -->(lhs::C, rhs) where C = StdRule(lhs, rhs...)
 
-apply(r::StdRule, c) = r.lhs == c ? tuple(r.rhs...) : nothing
+apply(r::StdRule{C}, c::C) where C = r.lhs == c ? tuple(r.rhs...) : nothing
 arity(r::StdRule) = length(r.rhs)
 
 function show(io::IO, r::StdRule)
@@ -200,13 +213,15 @@ mutable struct StdGrammar{C} <: Grammar{StdRule{C}}
   rules       :: Set{StdRule{C}}
   completions :: Dict{AtMost{C, 2}, Vector{C}}
 
-  function StdGrammar(start, rules::Set{StdRule{C}}) where {C, P}
+  function StdGrammar(start, rules)
+    R = eltype(typeof(rules))
+    C = catytype(R)
     completions = Dict{AtMost{C, 2}, Vector{C}}()
     for r in rules
       comps = get!(() -> C[], completions, r.rhs)
       push!(comps, r.lhs)
     end
-    return new{C}(Set(collect(start)), rules, completions)
+    return new{C}(Set(collect(start)), Set(collect(rules)), completions)
   end
 end
 
