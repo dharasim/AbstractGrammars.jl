@@ -40,7 +40,7 @@ Chart, chartparse,
 # Trees
 Tree, labels, innerlabels, leaflabels, tree_similarity, isleaf, zip_trees,
 Treelet, treelets, 
-dict2tree, tree2derivation, tree2apps, treelet2stdrule,
+dict2tree, tree2derivation, tree2apps, treelet2stdrule, treelet2prodrule,
 plot_tree
 
 ###############

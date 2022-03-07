@@ -1,9 +1,14 @@
-# # Grammar Toolkit Tutorial
-# ## Part 1: Gentle Introduction
-# ### Plotting a tree analysis
-# To get started directly, we download the 
-# [Jazz Harmony Treebank](https://github.com/DCMLab/JazzHarmonyTreebank)
-# and plot the tree analysis of the Jazz standard "Sunny".
+#=
+# Grammar Toolkit Tutorial
+Preliminaries
+- Remember the Dirichlet distribution & the Dirichlet-categorical model
+- Familiarize with context-free grammars
+## Part 1: Gentle Introduction
+### Plotting a tree analysis
+To get started directly, we download the 
+[Jazz Harmony Treebank](https://github.com/DCMLab/JazzHarmonyTreebank)
+and plot the tree analysis of the Jazz standard "Sunny".
+=#
 import AbstractGrammars as AG
 import AbstractGrammars.JazzTreebank as JHT
 
@@ -432,17 +437,22 @@ function cross_validation_index_split(num_folds, num_total, rng=default_rng())
   return collect(zip(test_indices, train_indices))
 end
 
+index_splits = cross_validation_index_split(10, 150)
+#-
 import Logging
-function prediction_accs_loocv(grammar, mk_ruledist, tunes, seq2start, tune2tree; showprogress=true)
+Logging.disable_logging(Logging.Info)
+function prediction_accs_loocv(
+    grammar, mk_ruledist, tunes, seq2start, tune2tree; 
+    showprogress=true, treelet2rule=AG.treelet2stdrule
+  )
   progress_msg = "calculating prediction accuracies: "
   p = Progress(length(tunes); dt=0.01, desc=progress_msg, enabled=showprogress)
-  index_splits = cross_validation_index_split(length(tunes,), length(tunes))
+  index_splits = cross_validation_index_split(length(tunes), length(tunes))
   trees = map(tune2tree, tunes)
-  Logging.disable_logging(Logging.Info)
   progress_map(index_splits; progress=p) do ((test_idx,), train_idxs)
     ## train rule distribution
     ruledist = mk_ruledist() # initializing the prior distribution needs most of the time
-    AG.observe_trees!(AG.treelet2stdrule, ruledist, trees[train_idxs])
+    AG.observe_trees!(treelet2rule, ruledist, trees[train_idxs])
 
     ## evaluate rule distribution
     tree = trees[test_idx]
@@ -497,6 +507,350 @@ AG.plot_tree(tree_prediction; getlabel=t->t.label.val)
 We see that the grammar captures already some structure but not a lot.
 It works well on the last phrase of the tune's chord sequence but it does not
 work well on the whole tune.
-To improve the model, we jointly consider harmony and rhythm in the next part of
+To improve the model, we jointly consider harmony and rhythm in a later part of
 the tutorial.
 =#
+
+#=
+## Part 3: Grammar induction
+In the previous part, we trained the probability parameters of the rewrite-rule
+distributions by observing trees from a treebank. If such trees are not available,
+the parameters can also be inferred from the sequences alone, instead of the 
+parse trees, using variational Bayesian inference via the function `runvi`.
+=#
+
+grammar = mk_harmony_grammar([:rightheaded])
+mk_prior = () -> mk_harmony_prior(grammar)
+seq2start = seq->NT(seq[end])
+sequences = [AG.leaflabels(tune["harmony_tree"]) for tune in treebank]
+ruledist_post = AG.runvi(2, mk_prior, grammar, sequences, seq2start)
+
+#=
+Note how the `runvi` function does not take a rule distribution directly but
+expects a [thunk](https://en.wikipedia.org/wiki/Thunk), a function that can be
+called without parameters. In each epoch of the variational inference, the 
+`mk_prior` function is called to construct a fresh rule distribution that is then
+trained with the expected rule usage in a hypothetical treebank.
+=#
+
+tune2tree = tune->tune["harmony_tree"]
+accs = prediction_accs(grammar, ruledist_post, treebank, seq2start, tune2tree)
+mean(accs)
+
+#=
+## Part 4: Definition of custom rule and grammar types using the example of a
+simple rhythm grammar
+We define custom types for rhythm, categories, rhythm rules, and a rhythm grammars,
+and implement the respective interfaces.
+The rhythm grammar's categories are rational numbers between 0 and 1, representing
+a duration relative to the total duration of the whole sequence, together
+with a boolean flag that signals whether a category is terminal. We do not
+have to define a custom type for rhythm categories but we can simple alias
+the standard category implementation.
+
+```julia
+# copied from AbstractGrammars.jl
+struct StdCategory{T}
+  isterminal :: Bool
+  val        :: T
+end
+
+T(val) = StdCategory(true, val)
+NT(val) = StdCategory(false, val)
+
+T(c::StdCategory)  = @set c.isterminal = true
+NT(c::StdCategory) = @set c.isterminal = false
+
+isterminal(c::StdCategory) = c.isterminal
+```
+=#
+
+const RhythmCategory = AG.StdCategory{Rational{Int}}
+
+#=
+There are two types of rhythm rules, rules that split a nonterminal category's 
+duration according to a split ratio and rules that transform a nonterminal 
+into a terminal category while preserving the duration value.
+There are infinitely many possible rhythm categories and rules but
+they follow a simple logic which can be exploited to implement them efficiently.
+Since Julia does not support sum types (aka tagged unions) directly like 
+statically types functional programming languages, rhythm categories require a
+rather "hacky" implementation.
+=#
+
+using AbstractGrammars: Rule, default
+
+## subtype Rule to signal that `RhythmRule` implements the rule interface
+## with categories of type `RhythmCategory`
+struct RhythmRule <: Rule{RhythmCategory}
+  istermination :: Bool
+  split_ratio   :: Rational{Int}
+end
+
+## definition of custom constructors
+## useage of a default rational number for termination rules
+RhymTerm() = RhythmRule(true, default(Rational{Int}))
+RhymSplit(split_ratio) = RhythmRule(false, split_ratio)
+
+## overloading of the show method to pretty print rhythm rules
+import Base: show
+function show(io::IO, r::RhythmRule)
+  if r.istermination
+    print(io, "RhymTerm()")
+  else
+    print(io, "RhymSplit($(r.split_ratio))")
+  end
+end
+
+## examples
+RhymTerm(), RhymSplit(1//2)
+
+#=
+For the rule interface, the functions `arity` and `apply` need to be implemented 
+/ overloaded. The arity of a rule is the length of its right-hand sides and applying a rule to
+a category (i.e., a left-hand side) computes the corresponding right-hand side
+represented as a tuple of categories.
+If a rule is not applicable to a category, then `nothing` is returned.
+=#
+
+## overloading required importing the functions
+import AbstractGrammars: arity, apply
+
+arity(r::RhythmRule) = r.istermination ? 1 : 2
+
+function apply(r::RhythmRule, c::RhythmCategory)
+  if isterminal(c)
+    nothing
+  elseif r.istermination
+    tuple(T(c)) # equivalent to (T(c),)
+  else # r is a split rule
+    tuple(NT(r.split_ratio * c.val), NT((1 - r.split_ratio) * c.val))
+  end
+end
+
+## example
+c = NT(1//2)
+r = RhymSplit(1//4)
+apply(r, c)
+
+#=
+A rhythm grammar includes the terminaltion rule and a finite number of 
+split rules. 
+=#
+
+using AbstractGrammars: Grammar
+
+## subtype `Grammar` to signal that `RhythmGrammar` implements the grammar
+## interface with rule type `RhythmRule`
+mutable struct RhythmGrammar <: Grammar{RhythmRule}
+  splitrules  :: Set{RhythmRule}
+  function RhythmGrammar(splitrules)
+    @assert all(arity(r) == 2 for r in splitrules) # sanity check
+    new(Set(collect(splitrules)))
+  end
+end
+
+## smart constructor for rhythm grammars
+function mk_rhythm_grammar(max_num=100, max_denom=100)
+  splitrules = Set(RhymSplit(n//d) for n in 1:max_num for d in n+1:max_denom)
+  RhythmGrammar(splitrules)
+end
+
+#=
+The grammar interface consists of a single function `push_completions!`that
+pushes all rule applications that evaluate to a right-hand side of length 1 or 2
+to a stack. This design of mutating a stack allows the parsing to be more efficient
+in terms of run time performance.
+=#
+
+using AbstractGrammars: App
+import AbstractGrammars: push_completions!
+
+function push_completions!(::RhythmGrammar, stack, c)
+  if isterminal(c)
+    push!(stack, App(NT(c), RhymTerm()))
+  end
+end
+
+function push_completions!(grammar::RhythmGrammar, stack, c1, c2)
+  if isnonterminal(c1) && isnonterminal(c2)
+    s = sum(c1.val + c2.val)
+    ratio = c1.val / s
+    rule = RhymSplit(ratio)
+    if rule in grammar.splitrules
+      push!(stack, App(NT(s), rule))
+    end
+  end
+end
+
+#=
+To parse the duration sequences of the treebank, only one thing is left: the 
+definition of the probability model (i.e., the rule distribution).
+We go one step beyond what standard probabilistic context-free grammars can do
+and use a rule distribution in which the probability of a rule application only
+depends the split ratio and not on the duration of the rhythmic category.
+=#
+
+grammar = mk_rhythm_grammar()
+
+## usage of a symmetrical dirichlet distribution
+function mk_rhythm_prior(grammar)
+  ## use the same rewrite distribution for all categories
+  dircats =  AG.symdircat(union(grammar.splitrules, [RhymTerm()]), 0.1)
+  c -> dircats
+end
+
+## calculate prediction accuracies
+ruledist = mk_rhythm_prior(grammar)
+seq2start = seq -> NT(1//1)
+tune2tree = tune -> tune["rhythm_tree"]
+accs = prediction_accs(grammar, ruledist, treebank, seq2start, tune2tree)
+mean(accs)
+
+#=
+The implementation works but the predictions are very inaccurate because the
+rule distribution is not trained yet.
+As before we can use train the rule distribution by observing the treebank trees.
+
+```julia
+for tune in treebank
+  AG.observe_tree!(treelet2rhythmrule, ruledist, tune["rhythm_tree"])
+end
+```
+
+For this to work, we have to implement a function that converts a treelet 
+(i.e., a tree branch or unary continuation) into a rhythm rule.
+
+```julia
+struct Treelet{T}
+  root_label   :: T
+  child_labels :: Vector{T}
+end
+```
+=#
+
+function treelet2rhythmrule(treelet)
+  root = treelet.root_label
+  children = treelet.child_labels
+  if arity(treelet) == 1
+    child = children[1]
+    if isnonterminal(root) && isterminal(child) && root.val == child.val
+      RhymTerm()
+    else
+      error("cannot convert unary $treelet into a rhythm rule")
+    end
+  elseif arity(treelet) == 2 && 
+        isnonterminal(root) && 
+        isnonterminal(children[1]) && isnonterminal(children[2]) &&
+        root.val == children[1].val + children[2].val
+    RhymSplit(children[1].val // root.val)
+  else
+    error("cannot convert binary $treelet into a rhythm rule")
+  end
+end
+
+for tune in treebank
+  AG.observe_tree!(treelet2rhythmrule, ruledist, tune["rhythm_tree"])
+end
+
+accs = prediction_accs(grammar, ruledist, treebank, seq2start, tune2tree)
+mean(accs)
+
+#=
+And with leave-one-out cross validation...
+=#
+
+accs = prediction_accs_loocv(
+  grammar, () -> mk_rhythm_prior(grammar), treebank, seq2start, tune2tree; 
+  treelet2rule=treelet2rhythmrule
+)
+mean(accs)
+
+#=
+## Part 5: Jointly modeling harmony and rhythm with product grammars and probabilistic programs
+In a product grammar, categories and rules are basically pairs of categories and
+rules of their component grammars. In our case, the first product grammar component is
+the treebank grammar for harmony and the second component is the rhythm grammar.
+=#
+
+hg = mk_harmony_grammar([:rightheaded])
+rg = mk_rhythm_grammar()
+pg = AG.ProductGrammar(hg, rg)
+seq2start = seq -> (NT(seq[end][1]), NT(1//1))
+tune2tree = tune -> tune["product_tree"]
+
+#=
+The definition of the rule distribution needs more care than just multiplying
+the probability of the component rule applications, because the arity of the
+component rules must match.
+Probability models that go beyond standard distributions can be defined as 
+[probabilistic programs](https://en.wikipedia.org/wiki/Probabilistic_programming).
+We use the package `SimpleProbabilisticPrograms.jl` which provides an implementation
+that works well with `AbstractGrammars.jl`
+=#
+
+using SimpleProbabilisticPrograms: SimpleProbabilisticPrograms, @probprog, Dirac
+
+## The product grammar's rule distribution has parameters stored in a
+## harmony distribution and a rhythm distribution.
+@probprog function simple_product_model(harmony_dist, rhythm_dist, nt)
+  ## A product rule is sampled by first sampling the harmony rule that is
+  ## applicable to the first componet of the nonterminal category `nt`.
+  harmony_nt, rhythm_nt = nt
+  harmony_rule ~ harmony_dist(harmony_nt)
+  ## If the sampled harmony rule is unary, then it must be a termination rule.
+  if arity(harmony_rule) == 1
+    rhythm_rule ~ Dirac(RhymTerm())
+  else
+    ## Otherwise, a split rule is sampled.
+    rhythm_rule ~ rhythm_dist(rhythm_nt)
+  end
+  return # empty return statement by convention
+end
+
+## Probabilistic program can be used as distribution over traces of sample statements
+harmony_dist = mk_harmony_prior(hg)
+rhythm_dist = mk_rhythm_prior(rg)
+nt = (NT(Cm), NT(1//2))
+prog = simple_product_model(harmony_dist, rhythm_dist, nt)
+trace = rand(prog)
+#-
+logpdf(prog, trace)
+
+#=
+To use the program as a distribution over rules (instead of over traces), 
+a one-to-one mapping between rules and such traces needs to be implemented
+using the functions `fromtrace` and `totrace`.
+=#
+
+import SimpleProbabilisticPrograms: fromtrace, totrace
+fromtrace(::typeof(simple_product_model), trace) = AG.ProductRule(trace...)
+totrace(::typeof(simple_product_model), rule) = (harmony_rule=rule[1], rhythm_rule=rule[2])
+
+function mk_simple_product_prior(harmony_grammar, rhythm_grammar)
+  harmony_dist = mk_harmony_prior(harmony_grammar)
+  rhythm_dist = mk_rhythm_prior(rhythm_grammar)
+  nt -> simple_product_model(harmony_dist, rhythm_dist, nt)
+end
+
+ruledist = mk_simple_product_prior(hg, rg)
+rand(ruledist(nt))
+#-
+accs = prediction_accs(pg, ruledist, treebank, seq2start, tune2tree)
+mean(accs)
+#-
+treelet2rule = AG.treelet2prodrule(AG.treelet2stdrule, treelet2rhythmrule)
+for tune in treebank
+  AG.observe_tree!(treelet2rule, ruledist, tune["product_tree"])
+end
+accs = prediction_accs(pg, ruledist, treebank, seq2start, tune2tree)
+mean(accs)
+
+#=
+And with leave-one-out cross validation...
+=#
+
+accs = prediction_accs_loocv(
+  pg, () -> mk_simple_product_prior(hg, rg), treebank, seq2start, tune2tree; treelet2rule
+)
+mean(accs)

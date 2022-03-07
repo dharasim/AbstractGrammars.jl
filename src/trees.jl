@@ -92,6 +92,19 @@ function treelet2stdrule(treelet::Treelet)
   StdRule(treelet.root_label, treelet.child_labels...)
 end
 
+function treelet2prodrule(treelet2fstrule, treelet2sndrule)
+  function unzip(xs)
+    n = length(first(xs))
+    ntuple(i -> map(x -> x[i], xs), n)
+  end
+  function (treelet)
+    lhs1, lhs2 = treelet.root_label
+    rhs1, rhs2 = unzip(treelet.child_labels)
+    rule1 = treelet2fstrule(Treelet(lhs1, rhs1...))
+    rule2 = treelet2sndrule(Treelet(lhs2, rhs2...))
+    ProductRule(rule1, rule2)
+  end
+end
 
 function relabel_with_spans(tree)
   k = 0 # leaf index

@@ -414,8 +414,8 @@ begin
   mutable struct RhythmGrammar <: Grammar{RhythmRule}
     splitrules  :: Set{RhythmRule}
     function RhythmGrammar(splitrules)
-      @assert all(arity(r) == 2 for r in splitrules)
-      new(Set(splitrules))
+      @assert all(arity(r) == 2 for r in splitrules) # sanity check
+      new(Set(collect(splitrules)))
     end
   end
 
