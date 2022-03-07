@@ -3,6 +3,9 @@
 Preliminaries
 - Remember the Dirichlet distribution & the Dirichlet-categorical model
 - Familiarize with context-free grammars
+=#
+
+#=
 ## Part 1: Gentle Introduction
 ### Plotting a tree analysis
 To get started directly, we download the 
